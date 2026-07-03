@@ -3176,18 +3176,23 @@ const Pages = {
     };
 
     el.querySelector('#sd-tab-content').innerHTML = tabContent.funding;
+    // Passed to modals opened from this page so that, after a create/update, the
+    // Shipment Detail view (funding/payments tabs) redraws with fresh data instead
+    // of only refreshing when the standalone Funding/Payments list page happens to
+    // be the active page (State.currentPage is 'shipments' here, not 'funding'/'payments').
+    const refreshShipmentDetail = () => Pages.shipmentDetail(el, shipment.id, { fromPage: 'shipments' });
     const bindFundingTabEvents = () => {
       const newBtn = el.querySelector('#sd-new-funding');
-      if (newBtn) newBtn.addEventListener('click', () => Pages.newFundingModal(shipment.customer_id, shipment.id));
+      if (newBtn) newBtn.addEventListener('click', () => Pages.newFundingModal(shipment.customer_id, shipment.id, refreshShipmentDetail));
       el.querySelectorAll('#sd-tab-content tr[data-fid]').forEach(row => {
-        row.addEventListener('click', () => Pages.fundingDetailModal(row.dataset.fid));
+        row.addEventListener('click', () => Pages.fundingDetailModal(row.dataset.fid, refreshShipmentDetail));
       });
     };
     const bindPaymentsTabEvents = () => {
       const newBtn = el.querySelector('#sd-new-payment');
-      if (newBtn) newBtn.addEventListener('click', () => Pages.newPaymentModal(shipment.customer_id, shipment.id));
+      if (newBtn) newBtn.addEventListener('click', () => Pages.newPaymentModal(shipment.customer_id, shipment.id, refreshShipmentDetail));
       el.querySelectorAll('#sd-tab-content tr[data-pid]').forEach(row => {
-        row.addEventListener('click', () => Pages.paymentDetailModal(row.dataset.pid));
+        row.addEventListener('click', () => Pages.paymentDetailModal(row.dataset.pid, refreshShipmentDetail));
       });
     };
     const bindInvoiceTabEvents = () => {
@@ -3310,7 +3315,7 @@ const Pages = {
     });
   },
 
-  async fundingDetailModal(fundingId) {
+  async fundingDetailModal(fundingId, onDone) {
     const { data: f, error } = await FundingService.getById(fundingId);
     if (error) { Toast.error(error.message); return; }
 
@@ -3454,7 +3459,8 @@ const Pages = {
         if (error) { Toast.error(error.message); return; }
         Toast.success('Funding record cancelled.');
         Modal.close(id);
-        if (State.currentPage === 'funding') Router.go('funding');
+        if (onDone) onDone();
+        else if (State.currentPage === 'funding') Router.go('funding');
       });
     }
 
@@ -3499,7 +3505,8 @@ const Pages = {
         const promoted = swift_reference || swift_attachment_path;
         Toast.success(promoted ? 'Saved — record moved to Pending Confirmation.' : 'Draft saved.');
         Modal.close(id);
-        if (State.currentPage === 'funding') Router.go('funding');
+        if (onDone) onDone();
+        else if (State.currentPage === 'funding') Router.go('funding');
       });
     }
 
@@ -3533,7 +3540,8 @@ const Pages = {
         }
         Toast.success('Receipt confirmed. Pool and wallet updated.');
         Modal.close(id);
-        if (State.currentPage === 'funding') Router.go('funding');
+        if (onDone) onDone();
+        else if (State.currentPage === 'funding') Router.go('funding');
       });
     }
   },
@@ -3601,7 +3609,7 @@ const Pages = {
     });
   },
 
-  async paymentDetailModal(paymentId) {
+  async paymentDetailModal(paymentId, onDone) {
     const { data: p, error } = await PaymentService.getById(paymentId);
     if (error) { Toast.error(error.message); return; }
 
@@ -3660,7 +3668,8 @@ const Pages = {
         if (error) { Toast.error(error.message); return; }
         Toast.success('Payment instruction cancelled.');
         Modal.close(id);
-        if (State.currentPage === 'payments') Router.go('payments');
+        if (onDone) onDone();
+        else if (State.currentPage === 'payments') Router.go('payments');
       });
     }
 
@@ -3672,7 +3681,8 @@ const Pages = {
         if (error) { Toast.error(error.message); btn.disabled = false; btn.textContent = 'Approve'; return; }
         Toast.success('Payment instruction approved.');
         Modal.close(id);
-        if (State.currentPage === 'payments') Router.go('payments');
+        if (onDone) onDone();
+        else if (State.currentPage === 'payments') Router.go('payments');
       });
     }
 
@@ -3697,7 +3707,8 @@ const Pages = {
         }
         Toast.success('Payment executed. Pool updated.');
         Modal.close(id);
-        if (State.currentPage === 'payments') Router.go('payments');
+        if (onDone) onDone();
+        else if (State.currentPage === 'payments') Router.go('payments');
       });
     }
   },
@@ -4730,7 +4741,7 @@ const Pages = {
     });
   },
 
-  newFundingModal(preselectedCustomerId, preselectedShipmentId) {
+  newFundingModal(preselectedCustomerId, preselectedShipmentId, onDone) {
     const id = Modal.open({
       title: 'New Funding Record',
       subtitle: 'Record an expected customer remittance',
@@ -4824,11 +4835,12 @@ const Pages = {
       }
       Toast.success(`Draft funding record ${data.reference_no} created.`);
       Modal.close(id);
-      if (State.currentPage === 'funding') Router.go('funding');
+      if (onDone) onDone();
+      else if (State.currentPage === 'funding') Router.go('funding');
     });
   },
 
-  newPaymentModal(preselectedCustomerId, preselectedShipmentId) {
+  newPaymentModal(preselectedCustomerId, preselectedShipmentId, onDone) {
     const id = Modal.open({
       title: 'New Payment Instruction',
       subtitle: 'Create a payment instruction for approval',
@@ -4937,7 +4949,8 @@ const Pages = {
       }
       Toast.success(`Payment instruction ${data.reference_no} created.`);
       Modal.close(id);
-      if (State.currentPage === 'payments') Router.go('payments');
+      if (onDone) onDone();
+      else if (State.currentPage === 'payments') Router.go('payments');
     });
   },
 
