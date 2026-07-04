@@ -1602,20 +1602,32 @@ function buildInteractiveStatementHTML(customer, shipmentLedgers, grandTotals) {
   return buildCustomerStatementHTML(customer, shipmentLedgers, grandTotals, { attachments: true });
 }
 
-// Builds the ledgers, embeds every SWIFT proof it can find as a base64 data
-// URL (so the resulting file is fully self-contained — no server, no signed
-// URLs, works when opened straight from disk), and downloads it as a
-// standalone interactive .html file.
+// Builds the ledgers, embeds every attachment it can find — SWIFT funding
+// proof, payment execution/delivery receipts, and charge receipts — as a
+// base64 data URL (so the resulting file is fully self-contained — no
+// server, no signed URLs, works when opened straight from disk), and
+// downloads it as a standalone interactive .html file.
 async function exportInteractiveStatement(customer, shipments) {
   try {
     Toast.info('Preparing statement — fetching attachments…');
     const { shipmentLedgers, grandTotals } = await Pages.buildStatementLedgers(customer, shipments);
     if (!shipmentLedgers.length) { Toast.info('No financial activity yet.'); return; }
 
+    // Each transaction line carries at most one of these three path fields,
+    // set by buildStatementLedgers depending on which kind of record it came
+    // from — each lives in its own storage bucket with its own RLS, so the
+    // bucket has to be picked per source, not assumed.
+    const attachmentSources = [
+      ['swiftAttachmentPath', 'swift-attachments'],
+      ['paymentAttachmentPath', 'payment-attachments'],
+      ['chargeAttachmentPath', 'charge-attachments'],
+    ];
     for (const ledger of shipmentLedgers) {
       for (const t of ledger.txs) {
-        if (!t.swiftAttachmentPath) continue;
-        const { blob, error } = await DB.getFileBlob(t.swiftAttachmentPath);
+        const source = attachmentSources.find(([field]) => t[field]);
+        if (!source) continue;
+        const [field, bucket] = source;
+        const { blob, error } = await DB.getFileBlob(bucket, t[field]);
         if (error || !blob) continue; // best-effort embed — a missing/failed attachment shouldn't block the whole export
         t.attachmentMimeType = blob.type || 'application/octet-stream';
         t.attachmentDataUrl = await new Promise((resolve, reject) => {
@@ -1797,13 +1809,43 @@ const DB = {
     return { error: error ? { message: error.message } : null };
   },
 
-  // Downloads a swift-attachments object as a raw Blob (as opposed to
-  // getSwiftAttachmentUrl's signed URL) so the interactive statement export
-  // can convert it to a base64 data URL and embed it directly in the
-  // downloaded HTML file, which has no server to fetch a signed URL from.
-  async getFileBlob(path) {
-    const { data, error } = await this._client.storage.from('swift-attachments').download(path);
+  // Downloads a storage object as a raw Blob from any of the app's private
+  // attachment buckets (as opposed to a signed URL) so the interactive
+  // statement export can convert it to a base64 data URL and embed it
+  // directly in the downloaded HTML file, which has no server to fetch a
+  // signed URL from.
+  async getFileBlob(bucket, path) {
+    const { data, error } = await this._client.storage.from(bucket).download(path);
     return { blob: data || null, error: error ? { message: error.message } : null };
+  },
+
+  // Storage — execution proof for payment instructions (private bucket,
+  // upload restricted to whoever can actually execute a payment: System
+  // Admin or Champions Manager, matching execute_payment_instruction's own
+  // role gate exactly). Optional — most payments will have nothing here.
+  async uploadPaymentAttachment(paymentId, file) {
+    const path = `${paymentId}/${Date.now()}_${file.name}`;
+    const { error } = await this._client.storage.from('payment-attachments').upload(path, file, { upsert: true });
+    return { path, error: error ? { message: error.message } : null };
+  },
+
+  async getPaymentAttachmentUrl(path) {
+    const { data, error } = await this._client.storage.from('payment-attachments').createSignedUrl(path, 300);
+    return { url: data?.signedUrl, error: error ? { message: error.message } : null };
+  },
+
+  // Storage — receipts/proof for individual charges (private bucket, upload
+  // restricted to whoever can create a charge: System Admin or GM Manager,
+  // matching charges_insert exactly). Optional.
+  async uploadChargeAttachment(chargeId, file) {
+    const path = `${chargeId}/${Date.now()}_${file.name}`;
+    const { error } = await this._client.storage.from('charge-attachments').upload(path, file, { upsert: true });
+    return { path, error: error ? { message: error.message } : null };
+  },
+
+  async getChargeAttachmentUrl(path) {
+    const { data, error } = await this._client.storage.from('charge-attachments').createSignedUrl(path, 300);
+    return { url: data?.signedUrl, error: error ? { message: error.message } : null };
   },
 
   async getNotifications() {
@@ -2366,11 +2408,25 @@ const PaymentService = {
   // which had no guard against a payment being executed twice from two tabs or
   // a retried network request (each prior call would silently insert a second,
   // independent pool debit for the same real-world payment).
-  async execute(id, { actual_amount, execution_reference }) {
+  // The attachment (delivery receipt / proof of payment) is genuinely optional
+  // and, if present, is uploaded BEFORE the RPC call and passed in as a path —
+  // not attached via a follow-up UPDATE, because payment_execute's RLS policy
+  // only permits the approved→executed transition itself; once a row is
+  // executed there is no policy that would allow a plain client-side UPDATE
+  // to add anything to it afterward. The attachment path has to travel inside
+  // the same atomic RPC call as the state transition, or it can never land.
+  async execute(id, { actual_amount, execution_reference, file }) {
+    let attachment_path = null;
+    if (file) {
+      const { path, error: uploadErr } = await DB.uploadPaymentAttachment(id, file);
+      if (uploadErr) return { data: null, error: uploadErr };
+      attachment_path = path;
+    }
     const { data, error } = await DB.rpc('execute_payment_instruction', {
       p_id: id,
       p_actual_amount: actual_amount,
       p_execution_reference: execution_reference || null,
+      p_attachment_path: attachment_path,
     });
     return { data, error: error ? { message: error.message } : null };
   },
@@ -2528,11 +2584,23 @@ const ChargesService = {
     return { data, error: error ? { message: error.message } : null };
   },
 
-  async create(shipmentId, { charge_type, currency, amount, notes }) {
+  // The attachment (receipt/invoice backing this charge) is genuinely optional.
+  // Unlike payment execution, charges_update has no state-machine restriction,
+  // so this can safely be a plain two-step create-then-attach rather than
+  // needing the path threaded through in one atomic call.
+  async create(shipmentId, { charge_type, currency, amount, notes, file }) {
     const { data, error } = await DB.from('charges').insert({
       shipment_id: shipmentId, charge_type, currency, amount, notes: notes || null, created_by: State.user.id,
     }).select().single();
-    return { data, error: error ? { message: error.message } : null };
+    if (error || !data) return { data, error: error ? { message: error.message } : null };
+    if (file) {
+      const { path, error: uploadErr } = await DB.uploadChargeAttachment(data.id, file);
+      if (uploadErr) return { data, error: uploadErr }; // charge itself was created fine; surface the upload failure separately
+      const { data: updated, error: updateErr } = await DB.from('charges').update({ attachment_path: path }).eq('id', data.id).select().single();
+      if (updateErr) return { data, error: updateErr };
+      return { data: updated, error: null };
+    }
+    return { data, error: null };
   },
 
   async update(id, { charge_type, currency, amount, notes }) {
@@ -4133,6 +4201,11 @@ const Pages = {
               <label class="form-label">Reference No <span class="opt">(optional)</span></label>
               <input type="text" class="form-input" id="pe-reference" placeholder="Bank/transfer ref">
             </div>
+            <div class="form-group">
+              <label class="form-label">Delivery Receipt <span class="opt">(optional)</span></label>
+              <input type="file" class="form-input" id="pe-attachment" accept="application/pdf,image/png,image/jpeg">
+              <div class="form-hint">PDF or photo proof the supplier received payment. The customer's statement can show this if you export it as an interactive file.</div>
+            </div>
           </div>
         ` : ''}
       `,
@@ -4177,7 +4250,9 @@ const Pages = {
         }
         const btn = document.getElementById('pe-execute-btn');
         btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Executing…';
-        const { error } = await PaymentService.execute(p.id, { actual_amount, execution_reference, currency: p.currency });
+        const fileInput = document.getElementById('pe-attachment');
+        const file = fileInput?.files?.[0] || null;
+        const { error } = await PaymentService.execute(p.id, { actual_amount, execution_reference, currency: p.currency, file });
         if (error) {
           errEl.textContent = error.message;
           errEl.style.display = 'block';
@@ -4590,6 +4665,11 @@ const Pages = {
         <div class="form-group">
           <label class="form-label">Notes <span class="opt">(optional)</span></label>
           <textarea class="form-input" id="ac-notes"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Receipt / Invoice <span class="opt">(optional)</span></label>
+          <input type="file" class="form-input" id="ac-attachment" accept="application/pdf,image/png,image/jpeg">
+          <div class="form-hint">Proof backing this charge — freight invoice, customs receipt, etc. The customer's statement can show this if you export it as an interactive file.</div>
         </div>`,
       footer: `<button class="btn btn-ghost" onclick="Modal.closeTop()">Cancel</button><button class="btn btn-amber" id="ac-submit">Add Charge</button>`,
     });
@@ -4598,13 +4678,14 @@ const Pages = {
       const currency = document.getElementById('ac-currency').value;
       const amount = parseFloat(document.getElementById('ac-amount').value);
       const notes = document.getElementById('ac-notes').value.trim();
+      const file = document.getElementById('ac-attachment')?.files?.[0] || null;
       const errEl = document.getElementById('ac-error');
       if (!charge_type) { errEl.textContent = 'Please enter a charge type.'; errEl.style.display = 'block'; return; }
       if (!amount || amount <= 0) { errEl.textContent = 'Please enter a valid amount.'; errEl.style.display = 'block'; return; }
 
       const btn = document.getElementById('ac-submit');
       btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Adding…';
-      const { error } = await ChargesService.create(shipment.id, { charge_type, currency, amount, notes });
+      const { error } = await ChargesService.create(shipment.id, { charge_type, currency, amount, notes, file });
       if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Add Charge'; return; }
       Toast.success('Charge added.');
       Modal.close(id);
@@ -4783,6 +4864,9 @@ const Pages = {
           note: c.notes || '',
           reference: null,
           amount: -(Number(c.amount) || 0),
+          // Carried through (not rendered by the plain statement) so the
+          // interactive export can locate and attach the source receipt.
+          chargeAttachmentPath: c.attachment_path || null,
         });
       });
 
@@ -4798,6 +4882,13 @@ const Pages = {
           note: p.purpose || '',
           reference: p.execution_reference || p.reference_no || null,
           amount: -(Number(p.amount) || 0),
+          // Carried through (not rendered by the plain statement) so the
+          // interactive export can locate and attach the delivery receipt.
+          // Suppressed under the same show_supplier_names=false condition as
+          // the payee name itself — a receipt image very likely shows the
+          // supplier's letterhead or name, so embedding it unconditionally
+          // would leak exactly what masking the payee text is meant to hide.
+          paymentAttachmentPath: customer.show_supplier_names !== false ? (p.execution_attachment_path || null) : null,
         });
       });
 
