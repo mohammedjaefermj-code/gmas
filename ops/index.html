@@ -1414,10 +1414,44 @@ const STATEMENT_PRINT_CSS = `
     cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
   }
 
+  /* ── Page nav (interactive export only) ──
+     A second "page" — Warehouse — living inside the same self-contained
+     file. Two plain buttons toggling two wrapper divs via inline JS; no
+     framework needed since this document is opened directly from disk. */
+  .stmt-nav {
+    display: flex; gap: 8px; width: 794px; margin: 0 auto 14px;
+  }
+  .stmt-nav-btn {
+    font-family: 'Inter', system-ui, sans-serif; font-size: 12.5px; font-weight: 600;
+    padding: 8px 18px; border-radius: 7px; border: 1px solid #E2E8F0;
+    background: #fff; color: #5A7A99; cursor: pointer;
+  }
+  .stmt-nav-btn.active { background: #0E1C2F; color: #fff; border-color: #0E1C2F; }
+
+  /* ── Warehouse page — supplier cards ── */
+  .stmt-wh-supplier {
+    border: 1px solid #E2E8F0; border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; background: #fff;
+  }
+  .stmt-wh-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 20px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.02em; margin-top: 4px;
+  }
+  .stmt-wh-stats {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0;
+  }
+  .stmt-wh-stat { border: 1px solid #E2E8F0; border-radius: 6px; padding: 8px 10px; }
+  .stmt-wh-stat-label { font-size: 9px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #94AABB; }
+  .stmt-wh-stat-value { font-family: 'DM Mono', monospace; font-size: 13px; color: #0E1C2F; margin-top: 2px; }
+  .stmt-wh-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; }
+  .stmt-wh-table th { text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #94AABB; padding: 5px 6px; border-bottom: 1px solid #E2E8F0; }
+  .stmt-wh-table td { padding: 6px; border-bottom: 1px solid #F1F5F9; vertical-align: top; }
+  .stmt-wh-photo { max-width: 220px; border-radius: 6px; border: 1px solid #E2E8F0; margin-top: 4px; display: block; }
+
   @media print {
     .stmt-shipment { page-break-inside: avoid; }
     body::after { display: none; }
     .stmt-page { box-shadow: none; border: none; margin: 0; }
+    .stmt-nav, #pageWarehouse { display: none !important; }
   }
 `;
 
@@ -1515,7 +1549,7 @@ function buildCustomerStatementHTML(customer, shipmentLedgers, grandTotals, opts
   const totalsBlock = Object.entries(grandTotals).map(([c, v]) => `
     <div class="stmt-grand-row"><span>${c}</span><span class="mono">${formatCurrency(v, c)}</span></div>`).join('');
 
-  const body = `
+  const statementPageHtml = `
     <div class="stmt-page">
       <header class="stmt-masthead">
         <div>
@@ -1546,6 +1580,26 @@ function buildCustomerStatementHTML(customer, shipmentLedgers, grandTotals, opts
         This statement reflects confirmed funding, invoiced charges, and executed payments recorded in our system as of the date above.
       </footer>
     </div>`;
+
+  // The Warehouse page only exists in the interactive export (never in print
+  // or the plain WYSIWYG preview) — gated on opts.warehousePageHtml being
+  // supplied at all, and belt-and-braces hidden under @media print in case
+  // someone prints straight from the downloaded file.
+  const body = opts.warehousePageHtml ? `
+    <div class="stmt-nav no-print">
+      <button type="button" class="stmt-nav-btn active" id="navStatement" onclick="gmStmtShowPage('statement')">Statement</button>
+      <button type="button" class="stmt-nav-btn" id="navWarehouse" onclick="gmStmtShowPage('warehouse')">Warehouse</button>
+    </div>
+    <div id="pageStatement">${statementPageHtml}</div>
+    <div id="pageWarehouse" style="display:none;">${opts.warehousePageHtml}</div>
+    <script>
+      function gmStmtShowPage(p) {
+        document.getElementById('pageStatement').style.display = p === 'statement' ? 'block' : 'none';
+        document.getElementById('pageWarehouse').style.display = p === 'warehouse' ? 'block' : 'none';
+        document.getElementById('navStatement').classList.toggle('active', p === 'statement');
+        document.getElementById('navWarehouse').classList.toggle('active', p === 'warehouse');
+      }
+    </script>` : statementPageHtml;
 
   return `<html><head><title>Statement — ${escapeHtml(customer.full_name)} — ${stmtRef}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1606,8 +1660,292 @@ function renderAttachmentControl(t) {
 // Same document as buildCustomerStatementHTML, just with attachment controls
 // switched on — reuses that function's markup entirely rather than
 // reimplementing it, so the export can never drift from the plain statement.
-function buildInteractiveStatementHTML(customer, shipmentLedgers, grandTotals) {
-  return buildCustomerStatementHTML(customer, shipmentLedgers, grandTotals, { attachments: true });
+function buildInteractiveStatementHTML(customer, shipmentLedgers, grandTotals, warehousePageHtml) {
+  return buildCustomerStatementHTML(customer, shipmentLedgers, grandTotals, { attachments: true, warehousePageHtml });
+}
+
+// Renders the actual supplier-card markup for one or more shipments' worth
+// of warehouse activity. This is the shared core behind both the embedded
+// Warehouse page in the full customer statement and the standalone
+// warehouse-only export. No name masking here — unlike GM's own sourced
+// suppliers (which show_supplier_names controls elsewhere), these suppliers
+// are provided by the customer themselves, so there's no identity to
+// protect from the customer they belong to.
+//
+// showShipmentInfo controls whether each shipment's suppliers are grouped
+// under a header carrying invoice number/destination/status, or rendered as
+// flat supplier cards with no shipment identifier at all — used by the
+// "this shipment only" export, since warehouse activity logically predates
+// and is independent of any one shipment.
+function renderWarehouseGroups(shipmentGroups, { showShipmentInfo = true } = {}) {
+  const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  const statusMeta = {
+    in_production: ['In Production', '#FDF3E3', '#A87830'],
+    shipped: ['Shipped', '#E7EEF7', '#2C5A8C'],
+    delivered: ['Delivered', '#E6F4EC', '#1E7E4A'],
+  };
+
+  const renderSupplierCards = (supplierBlocks) => supplierBlocks.map(({ sup, events, directPayments, directTotal, gmTotal, covered, remaining }) => {
+      const displayName = escapeHtml(sup.name);
+      const displayContact = sup.contact ? `<div style="color:#5A7A99;font-size:11px;margin-top:2px;">${escapeHtml(sup.contact)}</div>` : '';
+      const [statusLabel, statusBg, statusFg] = statusMeta[sup.status] || [null, null, null];
+      const statusHtml = statusLabel ? `<span class="stmt-wh-badge" style="background:${statusBg};color:${statusFg};">${statusLabel}</span>` : `<span class="stmt-wh-badge" style="background:#F1F5F9;color:#94AABB;">Status not set</span>`;
+
+      const eventRows = events.length ? events.map(e => `
+        <tr>
+          <td>${e.event_type === 'entry' ? 'Entry' : 'Exit'}</td>
+          <td class="mono">${fmtDate(e.event_date)}</td>
+          <td>${escapeHtml(e.description) || '—'}</td>
+          <td>${e.attachmentDataUrl ? ((e.attachmentMimeType||'').startsWith('image/') ? `<img class="stmt-wh-photo" src="${e.attachmentDataUrl}">` : `<a href="${e.attachmentDataUrl}" download class="stmt-rcpt-btn">📎 Download</a>`) : '—'}</td>
+        </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;color:#94AABB;">No warehouse events logged.</td></tr>`;
+
+      const paymentRows = directPayments.length ? directPayments.map(p => `
+        <tr>
+          <td class="mono">${fmtDate(p.paid_at)}</td>
+          <td class="mono">${formatCurrency(p.amount, p.currency)}</td>
+          <td>${escapeHtml(p.notes) || '—'}</td>
+          <td>${p.attachmentDataUrl ? ((p.attachmentMimeType||'').startsWith('image/') ? `<img class="stmt-wh-photo" src="${p.attachmentDataUrl}">` : `<a href="${p.attachmentDataUrl}" download class="stmt-rcpt-btn">📎 Download</a>`) : '—'}</td>
+        </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;color:#94AABB;">No direct payments recorded.</td></tr>`;
+
+      return `
+        <div class="stmt-wh-supplier">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:14px;color:#0E1C2F;">${displayName}</div>
+              ${displayContact}
+            </div>
+            ${statusHtml}
+          </div>
+          <div class="stmt-wh-stats">
+            ${sup.total_owed != null ? `<div class="stmt-wh-stat"><div class="stmt-wh-stat-label">Total Owed</div><div class="stmt-wh-stat-value">${formatCurrency(sup.total_owed, sup.currency)}</div></div>` : ''}
+            <div class="stmt-wh-stat"><div class="stmt-wh-stat-label">Customer Paid Direct</div><div class="stmt-wh-stat-value">${formatCurrency(directTotal, sup.currency)}</div></div>
+            <div class="stmt-wh-stat"><div class="stmt-wh-stat-label">GM Paid</div><div class="stmt-wh-stat-value">${formatCurrency(gmTotal, sup.currency)}</div></div>
+            <div class="stmt-wh-stat"><div class="stmt-wh-stat-label">${remaining != null ? 'Remaining' : 'Total Covered'}</div><div class="stmt-wh-stat-value">${formatCurrency(remaining != null ? remaining : covered, sup.currency)}</div></div>
+          </div>
+          <table class="stmt-wh-table">
+            <thead><tr><th>Event</th><th>Date</th><th>Description</th><th>Photo</th></tr></thead>
+            <tbody>${eventRows}</tbody>
+          </table>
+          <table class="stmt-wh-table">
+            <thead><tr><th>Direct Payment Date</th><th>Amount</th><th>Notes</th><th>Receipt</th></tr></thead>
+            <tbody>${paymentRows}</tbody>
+          </table>
+        </div>`;
+    }).join('');
+
+  if (!showShipmentInfo) {
+    // Flattened mode: no shipment wrapper, no invoice number, no destination,
+    // no status — just every tracked supplier's cards run together. Used for
+    // the "this shipment only" export, where the point is to hide that a
+    // shipment is involved at all.
+    return shipmentGroups.map(({ supplierBlocks }) => renderSupplierCards(supplierBlocks)).join('');
+  }
+
+  return shipmentGroups.map(({ shipment: s, supplierBlocks }, i) => `
+      <section class="stmt-shipment">
+        <div class="stmt-shipment-hdr">
+          <div style="display:flex;align-items:center;">
+            <span class="stmt-ship-num">${i + 1}</span>
+            <div>
+              <div class="stmt-shipment-inv">${s.invoice_no}</div>
+              <div class="stmt-shipment-route">${escapeHtml(s.destination || '')} · ${ShipmentService.STAGE_LABELS[s.status] || s.status}</div>
+            </div>
+          </div>
+        </div>
+        ${renderSupplierCards(supplierBlocks)}
+      </section>`).join('');
+}
+
+// Builds the Warehouse page markup embedded inside the full customer
+// statement — one section per shipment that actually has tracked suppliers
+// (shipments with none contribute nothing, same principle as the financial
+// ledger skipping zero-activity shipments), each with full detail: status,
+// financial ledger, warehouse entry/exit log, and direct-payment log, with
+// photos already embedded as data URLs by the caller.
+function buildWarehousePageHTML(shipmentGroups) {
+  return `
+    <div class="stmt-page">
+      <header class="stmt-masthead">
+        <div>
+          <div class="stmt-company">Great Movers Trading Co., Ltd</div>
+          <div class="stmt-doctitle">Warehouse &amp; Supplier Detail</div>
+        </div>
+      </header>
+      <div class="stmt-divider"></div>
+      ${renderWarehouseGroups(shipmentGroups, { showShipmentInfo: true })}
+      <footer class="stmt-footer">
+        Generated ${new Date().toLocaleString('en-GB')} by Great Movers Trading Co., Ltd — Freight &amp; Logistics.
+      </footer>
+    </div>`;
+}
+
+// Gathers every supplier, warehouse event, and direct payment across the
+// given shipments, embedding event/receipt photos as base64 data URLs so
+// the exported file stays fully self-contained. Shipments with no tracked
+// suppliers are skipped entirely — same "only show what actually exists"
+// principle as the financial ledger. Returns [] if nothing to show, which
+// the caller uses to decide whether the Warehouse page appears at all.
+async function gatherWarehouseStatementData(shipments) {
+  const groups = [];
+  for (const s of shipments) {
+    const { data: suppliers } = await SupplierService.list(s.id);
+    if (!suppliers || !suppliers.length) continue;
+    const supplierBlocks = await Promise.all(suppliers.map(async (sup) => {
+      const [eventsRes, directRes, gmPaidRes] = await Promise.all([
+        SupplierService.listEvents(sup.id),
+        SupplierService.listDirectPayments(sup.id),
+        SupplierService.getGmPaidTotals(sup.id),
+      ]);
+      const events = eventsRes.data || [];
+      const directPayments = directRes.data || [];
+      const gmPaid = gmPaidRes.data || {};
+      for (const e of events) {
+        if (!e.attachment_path) continue;
+        const { blob } = await DB.getFileBlob('warehouse-attachments', e.attachment_path);
+        if (!blob) continue;
+        e.attachmentMimeType = blob.type || 'application/octet-stream';
+        e.attachmentDataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('Could not read attachment.'));
+          reader.readAsDataURL(blob);
+        });
+      }
+      for (const p of directPayments) {
+        if (!p.attachment_path) continue;
+        const { blob } = await DB.getFileBlob('warehouse-attachments', p.attachment_path);
+        if (!blob) continue;
+        p.attachmentMimeType = blob.type || 'application/octet-stream';
+        p.attachmentDataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('Could not read attachment.'));
+          reader.readAsDataURL(blob);
+        });
+      }
+      const directTotal = directPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+      const gmTotal = gmPaid[sup.currency] || 0;
+      const covered = directTotal + gmTotal;
+      const remaining = sup.total_owed != null ? Number(sup.total_owed) - covered : null;
+      return { sup, events, directPayments, directTotal, gmTotal, covered, remaining };
+    }));
+    groups.push({ shipment: s, supplierBlocks });
+  }
+  return groups;
+}
+
+// Sums each supplier's outstanding Remaining (Total Owed minus Covered) by
+// currency, across every supplier that has a Total Owed set. Suppliers left
+// open-ended (no Total Owed) have no fixed figure to add up, so they're
+// excluded from the sum but counted separately — the export surfaces that
+// count so a reader knows the Owed figure isn't the full picture.
+function sumOwedByCurrency(shipmentGroups) {
+  const owed = {};
+  let openEndedCount = 0;
+  shipmentGroups.forEach(({ supplierBlocks }) => {
+    supplierBlocks.forEach(({ sup, remaining }) => {
+      if (remaining == null) { openEndedCount++; return; }
+      owed[sup.currency] = (owed[sup.currency] || 0) + Math.max(0, remaining);
+    });
+  });
+  return { owed, openEndedCount };
+}
+
+// Funds Summary block — the customer's available balance (confirmed funding
+// minus charges minus executed payments) set side by side with what's
+// currently owed to suppliers in this export's scope, so a reader can tell
+// at a glance whether enough has been funded to cover payouts or a top-up is
+// needed. Only currencies with a nonzero balance or owed amount are shown.
+function buildFundsSummaryHTML(netBalances, owedByCurrency, openEndedCount) {
+  const currencies = Array.from(new Set([...Object.keys(netBalances || {}), ...Object.keys(owedByCurrency || {})]));
+  const rows = currencies.filter(c => netBalances[c] || owedByCurrency[c]).map(c => {
+    const available = netBalances[c] || 0;
+    const owed = owedByCurrency[c] || 0;
+    const diff = available - owed;
+    const short = diff < 0;
+    return `
+      <div class="stmt-wh-stat" style="flex:1;min-width:160px;">
+        <div class="stmt-wh-stat-label">${c}</div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:#5A7A99;"><span>Available</span><span class="mono">${formatCurrency(available, c)}</span></div>
+        <div style="display:flex;justify-content:space-between;margin-top:3px;font-size:11px;color:#5A7A99;"><span>Owed to Suppliers</span><span class="mono">${formatCurrency(owed, c)}</span></div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px dashed #CBD5E1;font-weight:700;font-size:12px;color:${short ? '#B3261E' : '#1E7E4A'};"><span>${short ? 'Shortfall' : 'Surplus'}</span><span class="mono">${formatCurrency(Math.abs(diff), c)}</span></div>
+      </div>`;
+  }).join('');
+  return `
+    <div style="margin-bottom:20px;">
+      <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:14px;color:#0E1C2F;margin-bottom:8px;">Funds Summary</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">${rows || '<div style="color:#94AABB;font-size:12px;">No funded or owed amounts on record.</div>'}</div>
+      ${openEndedCount ? `<div style="margin-top:8px;font-size:10.5px;color:#94AABB;">${openEndedCount} supplier${openEndedCount > 1 ? 's' : ''} without a fixed Total Owed ${openEndedCount > 1 ? 'are' : 'is'} not included in the figure above — see detail below.</div>` : ''}
+    </div>`;
+}
+
+// Standalone warehouse-only export — deliberately excludes every financial
+// ledger, invoice, and margin detail; it exists to answer one question:
+// "have I funded enough to cover what I owe suppliers?" scope 'single' drops
+// every shipment identifier (invoice number, destination, status) since
+// warehouse activity predates and is logically independent of any one
+// shipment; scope 'all' keeps a shipment header per section so multi-shipment
+// activity stays legible.
+function buildWarehouseOnlyStatementHTML(customer, shipmentGroups, netBalances, scope) {
+  const { owed, openEndedCount } = sumOwedByCurrency(shipmentGroups);
+  const stmtDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const title = scope === 'all' ? 'Warehouse Activity — All Shipments' : 'Warehouse Activity';
+  const activityHtml = renderWarehouseGroups(shipmentGroups, { showShipmentInfo: scope === 'all' });
+
+  return `<html><head><title>${title} — ${escapeHtml(customer.full_name)}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&family=Source+Serif+4:wght@600;700&display=swap" rel="stylesheet">
+    <style>${STATEMENT_PRINT_CSS}</style>
+    </head><body>
+    <div class="stmt-page">
+      <header class="stmt-masthead">
+        <div>
+          <div class="stmt-company">Great Movers Trading Co., Ltd</div>
+          <div class="stmt-doctitle">${title}</div>
+        </div>
+      </header>
+      <div class="stmt-info-grid">
+        <div><div class="stmt-info-label">Customer</div><div class="stmt-info-value">${escapeHtml(customer.full_name)}</div></div>
+        <div><div class="stmt-info-label">Statement Date</div><div class="stmt-info-value mono">${stmtDate}</div></div>
+      </div>
+      <div class="stmt-divider"></div>
+      ${buildFundsSummaryHTML(netBalances, owed, openEndedCount)}
+      ${activityHtml || '<div style="text-align:center;color:#94AABB;padding:24px 0;">No warehouse activity recorded.</div>'}
+      <footer class="stmt-footer">
+        Generated ${new Date().toLocaleString('en-GB')} by Great Movers Trading Co., Ltd — Freight &amp; Logistics.
+      </footer>
+    </div>
+    </body></html>`;
+}
+
+// Gathers this scope's warehouse data and the customer's net balance, builds
+// the standalone document, and downloads it. scope is 'single' (this
+// shipment only, no shipment identifiers shown) or 'all' (every shipment for
+// this customer, grouped by shipment).
+async function exportWarehouseActivityStatement(shipment, scope) {
+  try {
+    Toast.info('Preparing warehouse statement…');
+    const customer = shipment.customers;
+    const shipments = scope === 'all'
+      ? (await ShipmentService.list({ customerId: customer.id })).data || []
+      : [shipment];
+    const [warehouseGroups, netBalancesRes] = await Promise.all([
+      gatherWarehouseStatementData(shipments),
+      CustomerService.getNetBalances(customer.id),
+    ]);
+    if (!warehouseGroups.length) { Toast.info('No warehouse activity to export yet.'); return; }
+    const html = buildWarehouseOnlyStatementHTML(customer, warehouseGroups, netBalancesRes.data || {}, scope);
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `GM-Warehouse-${customer.code}-${new Date().toISOString().slice(0, 10)}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    Toast.success('Warehouse statement downloaded.');
+  } catch (err) {
+    Toast.error(err.message || 'Could not build warehouse statement.');
+  }
 }
 
 // Builds the ledgers, embeds every attachment it can find — SWIFT funding
@@ -1647,7 +1985,12 @@ async function exportInteractiveStatement(customer, shipments) {
       }
     }
 
-    const html = buildInteractiveStatementHTML(customer, shipmentLedgers, grandTotals);
+    const warehouseGroups = await gatherWarehouseStatementData(shipments);
+    const warehousePageHtml = warehouseGroups.length
+      ? buildWarehousePageHTML(warehouseGroups)
+      : null;
+
+    const html = buildInteractiveStatementHTML(customer, shipmentLedgers, grandTotals, warehousePageHtml);
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2471,21 +2814,31 @@ const SupplierService = {
     return { data, error: error ? { message: error.message } : null };
   },
 
-  async create(shipmentId, { name, contact, currency, total_owed, notes }) {
+  STATUS_LABELS: { in_production: 'In Production', shipped: 'Shipped', delivered: 'Delivered' },
+
+  async create(shipmentId, { name, contact, currency, total_owed, notes, status }) {
     const { data, error } = await DB.from('shipment_suppliers').insert({
       shipment_id: shipmentId, name, contact: contact || null, currency,
       total_owed: (total_owed === '' || total_owed == null) ? null : total_owed,
-      notes: notes || null, created_by: State.user.id,
+      notes: notes || null, status: status || null, created_by: State.user.id,
     }).select().single();
     return { data, error: error ? { message: error.message } : null };
   },
 
-  async update(id, { name, contact, currency, total_owed, notes }) {
+  async update(id, { name, contact, currency, total_owed, notes, status }) {
     const { data, error } = await DB.from('shipment_suppliers').update({
       name, contact: contact || null, currency,
       total_owed: (total_owed === '' || total_owed == null) ? null : total_owed,
-      notes: notes || null,
+      notes: notes || null, status: status || null,
     }).eq('id', id).select().single();
+    return { data, error: error ? { message: error.message } : null };
+  },
+
+  // Quick-set from the supplier card badge — a one-field update, separate from
+  // the full edit modal, since this is the field that actually changes day to
+  // day while name/contact/total_owed rarely do.
+  async setStatus(id, status) {
+    const { data, error } = await DB.from('shipment_suppliers').update({ status: status || null }).eq('id', id).select().single();
     return { data, error: error ? { message: error.message } : null };
   },
 
@@ -3850,15 +4203,26 @@ const Pages = {
     }));
 
     const warehouseTabHtml = `
-      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:flex-end;">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;">
+        ${canEditWarehouse ? `<button class="btn btn-ghost btn-sm" id="sd-export-warehouse">Export Warehouse Statement</button>` : ''}
         ${canEditWarehouse ? `<button class="btn btn-amber btn-sm" id="sd-add-supplier">+ Add Supplier</button>` : ''}
       </div>
-      ${supplierBlocks.length ? supplierBlocks.map(({ sup, events, directPayments, directTotal, gmTotal, covered, remaining }) => `
+      ${supplierBlocks.length ? supplierBlocks.map(({ sup, events, directPayments, directTotal, gmTotal, covered, remaining }) => {
+        const statusColors = { in_production: ['var(--amber-pale)','var(--orange)'], shipped: ['var(--blue-bg)','var(--blue)'], delivered: ['var(--green-bg)','var(--green)'] };
+        const [statusBg, statusFg] = statusColors[sup.status] || ['var(--paper)','var(--text-secondary)'];
+        return `
         <div class="card-pad" style="border-bottom:1px solid var(--border);" data-supplier-id="${sup.id}">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;">
             <div>
               <div class="detail-val" style="font-size:15px;">${escapeHtml(sup.name)}</div>
               ${sup.contact ? `<div style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(sup.contact)}</div>` : ''}
+              ${canEditWarehouse ? `
+              <select data-status-select="${sup.id}" style="margin-top:6px;font-size:11.5px;font-weight:600;border:none;border-radius:20px;padding:3px 10px 3px 8px;background:${statusBg};color:${statusFg};-webkit-appearance:none;appearance:none;cursor:pointer;">
+                <option value="" ${!sup.status?'selected':''}>Status: Not set</option>
+                <option value="in_production" ${sup.status==='in_production'?'selected':''}>In Production</option>
+                <option value="shipped" ${sup.status==='shipped'?'selected':''}>Shipped</option>
+                <option value="delivered" ${sup.status==='delivered'?'selected':''}>Delivered</option>
+              </select>` : (sup.status ? `<span class="chip" style="margin-top:6px;background:${statusBg};color:${statusFg};">${SupplierService.STATUS_LABELS[sup.status]}</span>` : '')}
             </div>
             ${canEditWarehouse ? `<button class="btn btn-ghost btn-xs" data-edit-supplier="${sup.id}">Edit</button>` : ''}
           </div>
@@ -3900,7 +4264,8 @@ const Pages = {
               </tbody>
             </table>
           </div>
-        </div>`).join('') : `
+        </div>`;
+      }).join('') : `
       <div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div><div class="empty-title">No suppliers tracked for this shipment</div><div class="empty-desc">Entirely optional — add a supplier only if you're collecting goods at the warehouse on this customer's behalf.</div></div>`}
     `;
 
@@ -3942,8 +4307,19 @@ const Pages = {
     bindFundingTabEvents();
 
     const bindWarehouseTabEvents = () => {
+      const exportBtn = el.querySelector('#sd-export-warehouse');
+      if (exportBtn) exportBtn.addEventListener('click', () => Pages.warehouseExportScopeModal(shipment));
       const addBtn = el.querySelector('#sd-add-supplier');
       if (addBtn) addBtn.addEventListener('click', () => Pages.addSupplierModal(shipment, () => Pages.shipmentDetail(el, shipmentId, ctx)));
+      el.querySelectorAll('[data-status-select]').forEach(sel => {
+        sel.addEventListener('change', async () => {
+          sel.disabled = true;
+          const { error } = await SupplierService.setStatus(sel.dataset.statusSelect, sel.value);
+          if (error) { Toast.error(error.message); sel.disabled = false; return; }
+          Toast.success('Status updated.');
+          Pages.shipmentDetail(el, shipmentId, ctx);
+        });
+      });
       el.querySelectorAll('[data-edit-supplier]').forEach(btn => {
         btn.addEventListener('click', () => {
           const sup = (suppliers||[]).find(s => s.id === btn.dataset.editSupplier);
@@ -4906,6 +5282,36 @@ const Pages = {
     });
   },
 
+  // Lets the user pick what a warehouse export should cover before building
+  // it — "This shipment only" strips every shipment identifier (used when
+  // the activity predates or stands apart from this specific shipment),
+  // "All shipments" groups every shipment's warehouse activity for this
+  // customer under its own header.
+  warehouseExportScopeModal(shipment) {
+    const id = Modal.open({
+      title: 'Export Warehouse Statement',
+      subtitle: 'Choose what this export should cover',
+      body: `
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <button type="button" class="btn btn-ghost" id="wx-single" style="justify-content:flex-start;text-align:left;padding:14px;height:auto;">
+            <div>
+              <div style="font-weight:700;">This shipment only</div>
+              <div style="font-size:12px;color:var(--text-secondary);font-weight:400;margin-top:2px;">No shipment or invoice details — just this shipment's warehouse activity and funds.</div>
+            </div>
+          </button>
+          <button type="button" class="btn btn-ghost" id="wx-all" style="justify-content:flex-start;text-align:left;padding:14px;height:auto;">
+            <div>
+              <div style="font-weight:700;">All shipments</div>
+              <div style="font-size:12px;color:var(--text-secondary);font-weight:400;margin-top:2px;">Every shipment's warehouse activity for this customer, grouped by shipment.</div>
+            </div>
+          </button>
+        </div>`,
+      footer: `<button class="btn btn-ghost" onclick="Modal.closeTop()">Cancel</button>`,
+    });
+    document.getElementById('wx-single').addEventListener('click', () => { Modal.close(id); exportWarehouseActivityStatement(shipment, 'single'); });
+    document.getElementById('wx-all').addEventListener('click', () => { Modal.close(id); exportWarehouseActivityStatement(shipment, 'all'); });
+  },
+
   addSupplierModal(shipment, onSaved) {
     const id = Modal.open({
       title: 'Add Supplier',
@@ -4931,6 +5337,15 @@ const Pages = {
           </div>
         </div>
         <div class="form-group">
+          <label class="form-label">Status <span class="opt">(optional)</span></label>
+          <select class="form-select" id="as-status">
+            <option value="">Not set</option>
+            <option value="in_production">In Production</option>
+            <option value="shipped">Shipped</option>
+            <option value="delivered">Delivered</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label class="form-label">Notes <span class="opt">(optional)</span></label>
           <textarea class="form-input" id="as-notes"></textarea>
         </div>`,
@@ -4941,13 +5356,14 @@ const Pages = {
       const contact = document.getElementById('as-contact').value.trim();
       const currency = document.getElementById('as-currency').value;
       const total_owed = document.getElementById('as-total').value;
+      const status = document.getElementById('as-status').value;
       const notes = document.getElementById('as-notes').value.trim();
       const errEl = document.getElementById('as-error');
       if (!name) { errEl.textContent = 'Please enter a supplier name.'; errEl.style.display = 'block'; return; }
 
       const btn = document.getElementById('as-submit');
       btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Adding…';
-      const { error } = await SupplierService.create(shipment.id, { name, contact, currency, total_owed, notes });
+      const { error } = await SupplierService.create(shipment.id, { name, contact, currency, total_owed, notes, status });
       if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Add Supplier'; return; }
       Toast.success('Supplier added.');
       Modal.close(id);
@@ -4984,6 +5400,15 @@ const Pages = {
           </div>
         </div>
         <div class="form-group">
+          <label class="form-label">Status <span class="opt">(optional)</span></label>
+          <select class="form-select" id="es-status">
+            <option value="" ${!supplier.status?'selected':''}>Not set</option>
+            <option value="in_production" ${supplier.status==='in_production'?'selected':''}>In Production</option>
+            <option value="shipped" ${supplier.status==='shipped'?'selected':''}>Shipped</option>
+            <option value="delivered" ${supplier.status==='delivered'?'selected':''}>Delivered</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label class="form-label">Notes <span class="opt">(optional)</span></label>
           <textarea class="form-input" id="es-notes">${escapeHtml(supplier.notes)||''}</textarea>
         </div>`,
@@ -4994,13 +5419,14 @@ const Pages = {
       const contact = document.getElementById('es-contact').value.trim();
       const currency = document.getElementById('es-currency').value;
       const total_owed = document.getElementById('es-total').value;
+      const status = document.getElementById('es-status').value;
       const notes = document.getElementById('es-notes').value.trim();
       const errEl = document.getElementById('es-error');
       if (!name) { errEl.textContent = 'Please enter a supplier name.'; errEl.style.display = 'block'; return; }
 
       const btn = document.getElementById('es-submit');
       btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Saving…';
-      const { error } = await SupplierService.update(supplier.id, { name, contact, currency, total_owed, notes });
+      const { error } = await SupplierService.update(supplier.id, { name, contact, currency, total_owed, notes, status });
       if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Save Changes'; return; }
       Toast.success('Supplier updated.');
       Modal.close(id);
