@@ -1502,7 +1502,46 @@ const STATEMENT_PRINT_CSS = `
   .idx-remaining.flagged { color: #B3261E; }
   .idx-remaining.clear { color: #1E7E4A; font-weight: 500; }
 
-  @media print {
+  /* ── Mobile screen breakpoint ──
+     Self-contained statement exports (warehouse statement, full statement)
+     get opened directly on a phone — email attachment, downloaded file —
+     with no chance to pinch-zoom-to-fit first. Below ~820px, drop the fixed
+     A4 "paper" width for a fluid one and stack every grid that assumed
+     desktop-width columns. Print output is untouched — @page/@media print
+     below still target the physical A4 sheet regardless of the viewport
+     that triggered the print. */
+  @media screen and (max-width: 820px) {
+    body { font-size: 13px; }
+    .stmt-page {
+      width: 100%; min-width: 0; min-height: 0;
+      padding: 16px 14px;
+      border: none; box-shadow: none;
+    }
+    .stmt-nav { width: 100%; padding: 0 14px; flex-wrap: wrap; }
+    .stmt-masthead { flex-direction: column; align-items: flex-start; gap: 6px; }
+    .stmt-ref-block { text-align: left; }
+    .stmt-company { font-size: 18px; }
+    .stmt-info-grid { flex-wrap: wrap; gap: 14px 24px; }
+    .stmt-ccy-grid { grid-template-columns: 1fr; }
+    .stmt-wh-stats { grid-template-columns: 1fr 1fr; }
+    .stmt-totals-strip { grid-template-columns: 1fr 1fr; }
+    .stmt-totals-strip .stmt-total-card.remaining { grid-column: 1 / -1; }
+    .stmt-shipment-hdr, .stmt-shipment-total { flex-direction: column; align-items: flex-start; gap: 4px; }
+    .stmt-grand-row { max-width: none; }
+    .stmt-currency-head { flex-wrap: wrap; }
+    /* These tables have 4 narrow columns sized for an A4 sheet — shrink
+       rather than force horizontal scroll, since row content (dates,
+       amounts, a short "View Attachment" link) is short enough to still
+       read at this size. */
+    table.stmt-ledger, .stmt-wh-table {
+      font-size: 10px;
+    }
+    table.stmt-ledger th, table.stmt-ledger td,
+    .stmt-wh-table th, .stmt-wh-table td { padding: 5px 4px; }
+    table.stmt-index th, table.stmt-index td { padding: 6px 8px; }
+  }
+
+
     .stmt-shipment { page-break-inside: avoid; }
     body::after { display: none; }
     .stmt-page { box-shadow: none; border: none; margin: 0; }
@@ -1656,7 +1695,7 @@ function buildCustomerStatementHTML(customer, shipmentLedgers, grandTotals, opts
       }
     <\/script>` : statementPageHtml;
 
-  return `<html><head><meta charset="UTF-8"><title>Statement — ${escapeHtml(customer.full_name)} — ${stmtRef}</title>
+  return `<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Statement — ${escapeHtml(customer.full_name)} — ${stmtRef}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&family=Source+Serif+4:wght@600;700&display=swap" rel="stylesheet">
     <style>${STATEMENT_PRINT_CSS}</style>
@@ -2055,7 +2094,7 @@ function buildWarehouseOnlyStatementHTML(customer, shipmentGroups, netBalances, 
   const title = scope === 'all' ? 'Warehouse Activity — All Shipments' : 'Warehouse Activity';
   const activityHtml = renderWarehouseGroups(shipmentGroups, { showShipmentInfo: scope === 'all' });
 
-  return `<html><head><meta charset="UTF-8"><title>${title} — ${escapeHtml(customer.full_name)}</title>
+  return `<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${title} — ${escapeHtml(customer.full_name)}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&family=Source+Serif+4:wght@600;700&display=swap" rel="stylesheet">
     <style>${STATEMENT_PRINT_CSS}</style>
