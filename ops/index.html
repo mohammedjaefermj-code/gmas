@@ -1601,7 +1601,7 @@ function buildCustomerStatementHTML(customer, shipmentLedgers, grandTotals, opts
       }
     <\/script>` : statementPageHtml;
 
-  return `<html><head><title>Statement — ${escapeHtml(customer.full_name)} — ${stmtRef}</title>
+  return `<html><head><meta charset="UTF-8"><title>Statement — ${escapeHtml(customer.full_name)} — ${stmtRef}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&family=Source+Serif+4:wght@600;700&display=swap" rel="stylesheet">
     <style>${STATEMENT_PRINT_CSS}</style>
@@ -1892,7 +1892,7 @@ function buildWarehouseOnlyStatementHTML(customer, shipmentGroups, netBalances, 
   const title = scope === 'all' ? 'Warehouse Activity — All Shipments' : 'Warehouse Activity';
   const activityHtml = renderWarehouseGroups(shipmentGroups, { showShipmentInfo: scope === 'all' });
 
-  return `<html><head><title>${title} — ${escapeHtml(customer.full_name)}</title>
+  return `<html><head><meta charset="UTF-8"><title>${title} — ${escapeHtml(customer.full_name)}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&family=Source+Serif+4:wght@600;700&display=swap" rel="stylesheet">
     <style>${STATEMENT_PRINT_CSS}</style>
