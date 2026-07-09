@@ -1848,6 +1848,22 @@ const DB = {
     return { url: data?.signedUrl, error: error ? { message: error.message } : null };
   },
 
+  // Storage — warehouse/supplier evidence photos (warehouse entry/exit proof,
+  // supplier direct-payment receipts). One shared bucket for both, since both
+  // are optional evidentiary attachments on the same optional module. RLS is
+  // role-gated only (system_admin/gm_manager/champions_manager), not scoped by
+  // record status like swift-attachments — see shipment_suppliers table comment.
+  async uploadWarehouseAttachment(shipmentSupplierId, file) {
+    const path = `${shipmentSupplierId}/${Date.now()}_${file.name}`;
+    const { error } = await this._client.storage.from('warehouse-attachments').upload(path, file, { upsert: true });
+    return { path, error: error ? { message: error.message } : null };
+  },
+
+  async getWarehouseAttachmentUrl(path) {
+    const { data, error } = await this._client.storage.from('warehouse-attachments').createSignedUrl(path, 300);
+    return { url: data?.signedUrl, error: error ? { message: error.message } : null };
+  },
+
   async getNotifications() {
     const role = State.impersonating?.role || State.user?.role;
     const items = [];
@@ -2382,6 +2398,9 @@ const PaymentService = {
       // (already funded 1:1) rather than a cost GM actually bears — see getCloseSummary's
       // margin calculation.
       is_pass_through: payload.is_pass_through,
+      // Optional tag into the warehouse/supplier ledger — see payment_instructions
+      // column comment. Never required, so it never blocks a payment.
+      shipment_supplier_id: payload.shipment_supplier_id || null,
       status: 'pending_approval',
       created_by: State.user.id,
     };
@@ -2429,6 +2448,80 @@ const PaymentService = {
       p_attachment_path: attachment_path,
     });
     return { data, error: error ? { message: error.message } : null };
+  },
+};
+
+/* ══════════════════════════════════════════════════════════
+   MODULE: SupplierService
+   Optional warehouse entry/exit + supplier ledger per shipment.
+   See shipment_suppliers table comment for the RLS-scoping note.
+══════════════════════════════════════════════════════════ */
+const SupplierService = {
+  async list(shipmentId) {
+    const { data, error } = await DB.from('shipment_suppliers')
+      .select('*').eq('shipment_id', shipmentId).order('created_at');
+    return { data, error: error ? { message: error.message } : null };
+  },
+
+  async create(shipmentId, { name, contact, currency, total_owed, notes }) {
+    const { data, error } = await DB.from('shipment_suppliers').insert({
+      shipment_id: shipmentId, name, contact: contact || null, currency,
+      total_owed: (total_owed === '' || total_owed == null) ? null : total_owed,
+      notes: notes || null, created_by: State.user.id,
+    }).select().single();
+    return { data, error: error ? { message: error.message } : null };
+  },
+
+  async update(id, { name, contact, currency, total_owed, notes }) {
+    const { data, error } = await DB.from('shipment_suppliers').update({
+      name, contact: contact || null, currency,
+      total_owed: (total_owed === '' || total_owed == null) ? null : total_owed,
+      notes: notes || null,
+    }).eq('id', id).select().single();
+    return { data, error: error ? { message: error.message } : null };
+  },
+
+  async listEvents(shipmentSupplierId) {
+    const { data, error } = await DB.from('warehouse_events')
+      .select('*').eq('shipment_supplier_id', shipmentSupplierId).order('event_date');
+    return { data, error: error ? { message: error.message } : null };
+  },
+
+  async createEvent(shipmentId, shipmentSupplierId, { event_type, event_date, description, attachment_path }) {
+    const { data, error } = await DB.from('warehouse_events').insert({
+      shipment_id: shipmentId, shipment_supplier_id: shipmentSupplierId,
+      event_type, event_date: event_date || undefined, description: description || null,
+      attachment_path: attachment_path || null, created_by: State.user.id,
+    }).select().single();
+    return { data, error: error ? { message: error.message } : null };
+  },
+
+  async listDirectPayments(shipmentSupplierId) {
+    const { data, error } = await DB.from('supplier_direct_payments')
+      .select('*').eq('shipment_supplier_id', shipmentSupplierId).order('paid_at');
+    return { data, error: error ? { message: error.message } : null };
+  },
+
+  async createDirectPayment(shipmentId, shipmentSupplierId, { currency, amount, paid_at, notes, attachment_path }) {
+    const { data, error } = await DB.from('supplier_direct_payments').insert({
+      shipment_id: shipmentId, shipment_supplier_id: shipmentSupplierId,
+      currency, amount, paid_at: paid_at || undefined, notes: notes || null,
+      attachment_path: attachment_path || null, created_by: State.user.id,
+    }).select().single();
+    return { data, error: error ? { message: error.message } : null };
+  },
+
+  // GM's own payments toward this supplier — executed Payment Instructions
+  // tagged with this shipment_supplier_id. Summed client-side by currency,
+  // same lightweight approach buildStatementLedgers already uses for ledger
+  // totals, since this is a display/reporting figure, not a gate on anything.
+  async getGmPaidTotals(shipmentSupplierId) {
+    const { data, error } = await DB.from('payment_instructions')
+      .select('currency, amount').eq('shipment_supplier_id', shipmentSupplierId).eq('status', 'executed');
+    if (error) return { data: null, error: { message: error.message } };
+    const totals = {};
+    (data || []).forEach(p => { totals[p.currency] = (totals[p.currency] || 0) + Number(p.amount); });
+    return { data: totals, error: null };
   },
 };
 
@@ -3575,6 +3668,7 @@ const Pages = {
         <button class="tab-strip-btn" data-tab="expenses">Expenses</button>
         ${canSeeMargin ? `<button class="tab-strip-btn" data-tab="invoice">Customer Invoice</button>` : ''}
         <button class="tab-strip-btn" data-tab="payments">Payments</button>
+        <button class="tab-strip-btn" data-tab="warehouse">Warehouse</button>
       </div>
 
       <div class="card" id="sd-tab-content">
@@ -3725,11 +3819,89 @@ const Pages = {
       ${canEditCharges ? `<div style="padding:12px 16px;border-top:1px solid var(--border);"><button class="btn btn-ghost btn-sm" id="sd-add-charge">+ Add Charge</button></div>` : ''}
     `;
 
+    // Warehouse & Suppliers — optional module, only touches this shipment when a
+    // supplier's been explicitly added (addSupplierModal). Balance shown per
+    // supplier depends on whether total_owed was set: with it, a Remaining figure;
+    // without it (left case-by-case), just what's been covered so far.
+    const canEditWarehouse = ['system_admin','gm_manager','champions_manager'].includes(role);
+    const { data: suppliers } = await SupplierService.list(shipment.id);
+    const supplierBlocks = await Promise.all((suppliers||[]).map(async (sup) => {
+      const [eventsRes, directRes, gmPaidRes] = await Promise.all([
+        SupplierService.listEvents(sup.id),
+        SupplierService.listDirectPayments(sup.id),
+        SupplierService.getGmPaidTotals(sup.id),
+      ]);
+      const events = eventsRes.data || [];
+      const directPayments = directRes.data || [];
+      const gmPaid = gmPaidRes.data || {};
+      const directTotal = directPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+      const gmTotal = gmPaid[sup.currency] || 0;
+      const covered = directTotal + gmTotal;
+      const remaining = sup.total_owed != null ? Number(sup.total_owed) - covered : null;
+      return { sup, events, directPayments, directTotal, gmTotal, covered, remaining };
+    }));
+
+    const warehouseTabHtml = `
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:flex-end;">
+        ${canEditWarehouse ? `<button class="btn btn-amber btn-sm" id="sd-add-supplier">+ Add Supplier</button>` : ''}
+      </div>
+      ${supplierBlocks.length ? supplierBlocks.map(({ sup, events, directPayments, directTotal, gmTotal, covered, remaining }) => `
+        <div class="card-pad" style="border-bottom:1px solid var(--border);" data-supplier-id="${sup.id}">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;">
+            <div>
+              <div class="detail-val" style="font-size:15px;">${escapeHtml(sup.name)}</div>
+              ${sup.contact ? `<div style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(sup.contact)}</div>` : ''}
+            </div>
+            ${canEditWarehouse ? `<button class="btn btn-ghost btn-xs" data-edit-supplier="${sup.id}">Edit</button>` : ''}
+          </div>
+          <div class="stats-row" style="margin-bottom:12px;">
+            ${sup.total_owed != null ? `<div class="stat-card"><div class="stat-label">Total Owed</div><div class="stat-value" style="font-size:15px;">${formatCurrency(sup.total_owed, sup.currency)}</div></div>` : ''}
+            <div class="stat-card"><div class="stat-label">Customer Paid Direct</div><div class="stat-value" style="font-size:15px;">${formatCurrency(directTotal, sup.currency)}</div></div>
+            <div class="stat-card"><div class="stat-label">GM Paid</div><div class="stat-value" style="font-size:15px;">${formatCurrency(gmTotal, sup.currency)}</div></div>
+            <div class="stat-card accent-amber"><div class="stat-label">${remaining != null ? 'Remaining' : 'Total Covered'}</div><div class="stat-value" style="font-size:15px;">${formatCurrency(remaining != null ? remaining : covered, sup.currency)}</div></div>
+          </div>
+          ${canEditWarehouse ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+            <button class="btn btn-ghost btn-sm" data-log-event="${sup.id}">+ Log Warehouse Event</button>
+            <button class="btn btn-ghost btn-sm" data-log-payment="${sup.id}">+ Record Direct Payment</button>
+          </div>` : ''}
+          <div class="table-wrap" style="margin-bottom:8px;">
+            <table>
+              <thead><tr><th>Event</th><th>Date</th><th>Description</th><th></th></tr></thead>
+              <tbody>
+                ${events.length ? events.map(e => `
+                  <tr class="row-grey">
+                    <td><span class="chip chip-${e.event_type === 'entry' ? 'green' : 'blue'}">${e.event_type === 'entry' ? 'Entry' : 'Exit'}</span></td>
+                    <td class="mono">${e.event_date}</td>
+                    <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(e.description)||'—'}</td>
+                    <td>${e.attachment_path ? `<button class="btn btn-ghost btn-xs" data-view-attachment="${e.attachment_path}">View photo</button>` : ''}</td>
+                  </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--text-muted);">No warehouse events logged yet.</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Direct Payment Date</th><th class="r">Amount</th><th>Notes</th><th></th></tr></thead>
+              <tbody>
+                ${directPayments.length ? directPayments.map(p => `
+                  <tr class="row-grey">
+                    <td class="mono">${p.paid_at}</td>
+                    <td class="mono r">${formatCurrency(p.amount, p.currency)}</td>
+                    <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(p.notes)||'—'}</td>
+                    <td>${p.attachment_path ? `<button class="btn btn-ghost btn-xs" data-view-attachment="${p.attachment_path}">View receipt</button>` : ''}</td>
+                  </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--text-muted);">No direct payments recorded yet.</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        </div>`).join('') : `
+      <div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div><div class="empty-title">No suppliers tracked for this shipment</div><div class="empty-desc">Entirely optional — add a supplier only if you're collecting goods at the warehouse on this customer's behalf.</div></div>`}
+    `;
+
     const tabContent = {
       funding: fundingTabHtml,
       expenses: expensesTabHtml,
       ...(canSeeMargin ? { invoice: invoiceTabHtml } : {}),
       payments: paymentsTabHtml,
+      warehouse: warehouseTabHtml,
     };
 
     el.querySelector('#sd-tab-content').innerHTML = tabContent.funding;
@@ -3761,6 +3933,38 @@ const Pages = {
     };
     bindFundingTabEvents();
 
+    const bindWarehouseTabEvents = () => {
+      const addBtn = el.querySelector('#sd-add-supplier');
+      if (addBtn) addBtn.addEventListener('click', () => Pages.addSupplierModal(shipment, () => Pages.shipmentDetail(el, shipmentId, ctx)));
+      el.querySelectorAll('[data-edit-supplier]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const sup = (suppliers||[]).find(s => s.id === btn.dataset.editSupplier);
+          Pages.editSupplierModal(sup, () => Pages.shipmentDetail(el, shipmentId, ctx));
+        });
+      });
+      el.querySelectorAll('[data-log-event]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const sup = (suppliers||[]).find(s => s.id === btn.dataset.logEvent);
+          Pages.warehouseEventModal(shipment, sup, () => Pages.shipmentDetail(el, shipmentId, ctx));
+        });
+      });
+      el.querySelectorAll('[data-log-payment]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const sup = (suppliers||[]).find(s => s.id === btn.dataset.logPayment);
+          Pages.supplierDirectPaymentModal(shipment, sup, () => Pages.shipmentDetail(el, shipmentId, ctx));
+        });
+      });
+      el.querySelectorAll('[data-view-attachment]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          const { url, error } = await DB.getWarehouseAttachmentUrl(btn.dataset.viewAttachment);
+          btn.disabled = false;
+          if (error || !url) { Toast.error(error?.message || 'Could not load attachment.'); return; }
+          window.open(url, '_blank');
+        });
+      });
+    };
+
     el.querySelectorAll('#sd-tabs .tab-strip-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         el.querySelectorAll('#sd-tabs .tab-strip-btn').forEach(b => b.classList.remove('active'));
@@ -3769,6 +3973,7 @@ const Pages = {
         if (btn.dataset.tab === 'funding') bindFundingTabEvents();
         if (btn.dataset.tab === 'payments') bindPaymentsTabEvents();
         if (btn.dataset.tab === 'invoice') bindInvoiceTabEvents();
+        if (btn.dataset.tab === 'warehouse') bindWarehouseTabEvents();
       });
     });
 
@@ -4693,6 +4898,214 @@ const Pages = {
     });
   },
 
+  addSupplierModal(shipment, onSaved) {
+    const id = Modal.open({
+      title: 'Add Supplier',
+      subtitle: `Track a supplier collecting goods at the warehouse for ${shipment.invoice_no}`,
+      body: `
+        <div id="as-error" class="form-error-msg" style="display:none;"></div>
+        <div class="form-group">
+          <label class="form-label">Supplier Name</label>
+          <input type="text" class="form-input" id="as-name" placeholder="e.g. Yiwu Textiles Co.">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Contact <span class="opt">(optional)</span></label>
+          <input type="text" class="form-input" id="as-contact" placeholder="Phone, WeChat, email…">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Currency</label>
+            <select class="form-select" id="as-currency"><option value="USD">USD</option><option value="CNY">CNY</option><option value="ETB">ETB</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Total Owed <span class="opt">(optional)</span></label>
+            <input type="number" step="0.01" class="form-input" id="as-total" placeholder="Leave blank if unknown">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notes <span class="opt">(optional)</span></label>
+          <textarea class="form-input" id="as-notes"></textarea>
+        </div>`,
+      footer: `<button class="btn btn-ghost" onclick="Modal.closeTop()">Cancel</button><button class="btn btn-amber" id="as-submit">Add Supplier</button>`,
+    });
+    document.getElementById('as-submit').addEventListener('click', async () => {
+      const name = document.getElementById('as-name').value.trim();
+      const contact = document.getElementById('as-contact').value.trim();
+      const currency = document.getElementById('as-currency').value;
+      const total_owed = document.getElementById('as-total').value;
+      const notes = document.getElementById('as-notes').value.trim();
+      const errEl = document.getElementById('as-error');
+      if (!name) { errEl.textContent = 'Please enter a supplier name.'; errEl.style.display = 'block'; return; }
+
+      const btn = document.getElementById('as-submit');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Adding…';
+      const { error } = await SupplierService.create(shipment.id, { name, contact, currency, total_owed, notes });
+      if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Add Supplier'; return; }
+      Toast.success('Supplier added.');
+      Modal.close(id);
+      if (onSaved) onSaved();
+    });
+  },
+
+  editSupplierModal(supplier, onSaved) {
+    const id = Modal.open({
+      title: 'Edit Supplier',
+      subtitle: supplier.name,
+      body: `
+        <div id="es-error" class="form-error-msg" style="display:none;"></div>
+        <div class="form-group">
+          <label class="form-label">Supplier Name</label>
+          <input type="text" class="form-input" id="es-name" value="${escapeHtml(supplier.name)}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Contact <span class="opt">(optional)</span></label>
+          <input type="text" class="form-input" id="es-contact" value="${escapeHtml(supplier.contact)||''}">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Currency</label>
+            <select class="form-select" id="es-currency">
+              <option value="USD" ${supplier.currency==='USD'?'selected':''}>USD</option>
+              <option value="CNY" ${supplier.currency==='CNY'?'selected':''}>CNY</option>
+              <option value="ETB" ${supplier.currency==='ETB'?'selected':''}>ETB</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Total Owed <span class="opt">(optional)</span></label>
+            <input type="number" step="0.01" class="form-input" id="es-total" value="${supplier.total_owed ?? ''}" placeholder="Leave blank if unknown">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notes <span class="opt">(optional)</span></label>
+          <textarea class="form-input" id="es-notes">${escapeHtml(supplier.notes)||''}</textarea>
+        </div>`,
+      footer: `<button class="btn btn-ghost" onclick="Modal.closeTop()">Cancel</button><button class="btn btn-amber" id="es-submit">Save Changes</button>`,
+    });
+    document.getElementById('es-submit').addEventListener('click', async () => {
+      const name = document.getElementById('es-name').value.trim();
+      const contact = document.getElementById('es-contact').value.trim();
+      const currency = document.getElementById('es-currency').value;
+      const total_owed = document.getElementById('es-total').value;
+      const notes = document.getElementById('es-notes').value.trim();
+      const errEl = document.getElementById('es-error');
+      if (!name) { errEl.textContent = 'Please enter a supplier name.'; errEl.style.display = 'block'; return; }
+
+      const btn = document.getElementById('es-submit');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Saving…';
+      const { error } = await SupplierService.update(supplier.id, { name, contact, currency, total_owed, notes });
+      if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Save Changes'; return; }
+      Toast.success('Supplier updated.');
+      Modal.close(id);
+      if (onSaved) onSaved();
+    });
+  },
+
+  warehouseEventModal(shipment, supplier, onSaved) {
+    const today = new Date().toISOString().slice(0, 10);
+    const id = Modal.open({
+      title: 'Log Warehouse Event',
+      subtitle: supplier.name,
+      body: `
+        <div id="we-error" class="form-error-msg" style="display:none;"></div>
+        <div class="form-group">
+          <label class="form-label">Event</label>
+          <select class="form-select" id="we-type">
+            <option value="entry">Entry — goods arrived at warehouse</option>
+            <option value="exit">Exit — goods left warehouse</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Date</label>
+          <input type="date" class="form-input" id="we-date" value="${today}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description <span class="opt">(optional)</span></label>
+          <textarea class="form-input" id="we-desc" placeholder="What arrived/left, quantity, condition notes…"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Photo <span class="opt">(optional)</span></label>
+          <input type="file" accept="image/*" class="form-input" id="we-photo">
+        </div>`,
+      footer: `<button class="btn btn-ghost" onclick="Modal.closeTop()">Cancel</button><button class="btn btn-amber" id="we-submit">Log Event</button>`,
+    });
+    document.getElementById('we-submit').addEventListener('click', async () => {
+      const event_type = document.getElementById('we-type').value;
+      const event_date = document.getElementById('we-date').value;
+      const description = document.getElementById('we-desc').value.trim();
+      const fileInput = document.getElementById('we-photo');
+      const errEl = document.getElementById('we-error');
+      if (!event_date) { errEl.textContent = 'Please select a date.'; errEl.style.display = 'block'; return; }
+
+      const btn = document.getElementById('we-submit');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Logging…';
+
+      let attachment_path = null;
+      if (fileInput.files && fileInput.files[0]) {
+        const { path, error: uploadErr } = await DB.uploadWarehouseAttachment(supplier.id, fileInput.files[0]);
+        if (uploadErr) { errEl.textContent = 'Photo upload failed: ' + uploadErr.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Log Event'; return; }
+        attachment_path = path;
+      }
+
+      const { error } = await SupplierService.createEvent(shipment.id, supplier.id, { event_type, event_date, description, attachment_path });
+      if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Log Event'; return; }
+      Toast.success('Warehouse event logged.');
+      Modal.close(id);
+      if (onSaved) onSaved();
+    });
+  },
+
+  supplierDirectPaymentModal(shipment, supplier, onSaved) {
+    const today = new Date().toISOString().slice(0, 10);
+    const id = Modal.open({
+      title: 'Record Direct Payment',
+      subtitle: `${supplier.name} — paid by the customer directly, outside GMAS`,
+      body: `
+        <div id="sp-error" class="form-error-msg" style="display:none;"></div>
+        <div class="form-group">
+          <label class="form-label">Amount (${supplier.currency})</label>
+          <input type="number" step="0.01" class="form-input" id="sp-amount" placeholder="0.00">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Date Paid</label>
+          <input type="date" class="form-input" id="sp-date" value="${today}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notes <span class="opt">(optional)</span></label>
+          <textarea class="form-input" id="sp-notes" placeholder="Reference from the customer's receipt, etc."></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Receipt Photo <span class="opt">(optional)</span></label>
+          <input type="file" accept="image/*" class="form-input" id="sp-photo">
+        </div>`,
+      footer: `<button class="btn btn-ghost" onclick="Modal.closeTop()">Cancel</button><button class="btn btn-amber" id="sp-submit">Record Payment</button>`,
+    });
+    document.getElementById('sp-submit').addEventListener('click', async () => {
+      const amount = parseFloat(document.getElementById('sp-amount').value);
+      const paid_at = document.getElementById('sp-date').value;
+      const notes = document.getElementById('sp-notes').value.trim();
+      const fileInput = document.getElementById('sp-photo');
+      const errEl = document.getElementById('sp-error');
+      if (!amount || amount <= 0) { errEl.textContent = 'Please enter a valid amount.'; errEl.style.display = 'block'; return; }
+      if (!paid_at) { errEl.textContent = 'Please select a date.'; errEl.style.display = 'block'; return; }
+
+      const btn = document.getElementById('sp-submit');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Recording…';
+
+      let attachment_path = null;
+      if (fileInput.files && fileInput.files[0]) {
+        const { path, error: uploadErr } = await DB.uploadWarehouseAttachment(supplier.id, fileInput.files[0]);
+        if (uploadErr) { errEl.textContent = 'Photo upload failed: ' + uploadErr.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Record Payment'; return; }
+        attachment_path = path;
+      }
+
+      const { error } = await SupplierService.createDirectPayment(shipment.id, supplier.id, { currency: supplier.currency, amount, paid_at, notes, attachment_path });
+      if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Record Payment'; return; }
+      Toast.success('Direct payment recorded.');
+      Modal.close(id);
+      if (onSaved) onSaved();
+    });
+  },
+
   newCustomerModal() {
     const id = Modal.open({
       title: 'New Customer',
@@ -5451,6 +5864,10 @@ const Pages = {
           <label class="form-label">Shipment <span class="opt">(optional)</span></label>
           <select class="form-select" id="np-shipment"><option value="">Select a customer first</option></select>
         </div>
+        <div class="form-group" id="np-supplier-group" style="display:none;">
+          <label class="form-label">Link to Supplier <span class="opt">(optional)</span></label>
+          <select class="form-select" id="np-supplier"><option value="">Not linked to a tracked supplier</option></select>
+        </div>
         <div class="form-group">
           <label class="form-label">Payee</label>
           <input type="text" class="form-input" id="np-payee" placeholder="Factory or supplier name">
@@ -5508,20 +5925,37 @@ const Pages = {
 
     function loadShipmentsFor(customerId) {
       const sel = document.getElementById('np-shipment');
-      if (!customerId) { sel.innerHTML = '<option value="">Select a customer first</option>'; return; }
+      if (!customerId) { sel.innerHTML = '<option value="">Select a customer first</option>'; loadSuppliersFor(''); return; }
       sel.innerHTML = '<option value="">Loading…</option>';
       ShipmentService.list({ customerId }).then(({ data }) => {
         if (!data || !data.length) { sel.innerHTML = '<option value="">No shipments for this customer</option>'; return; }
         sel.innerHTML = '<option value="">No specific shipment</option>' + data.map(s =>
           `<option value="${s.id}" ${s.id===preselectedShipmentId?'selected':''}>${s.invoice_no}</option>`).join('');
+        loadSuppliersFor(sel.value);
+      });
+    }
+
+    // Suppliers tracked on the selected shipment (see SupplierService) — purely
+    // optional. Only shown at all if the shipment actually has any tracked.
+    function loadSuppliersFor(shipmentId) {
+      const group = document.getElementById('np-supplier-group');
+      const sel = document.getElementById('np-supplier');
+      if (!shipmentId) { group.style.display = 'none'; sel.innerHTML = '<option value="">Not linked to a tracked supplier</option>'; return; }
+      SupplierService.list(shipmentId).then(({ data }) => {
+        if (!data || !data.length) { group.style.display = 'none'; sel.innerHTML = '<option value="">Not linked to a tracked supplier</option>'; return; }
+        sel.innerHTML = '<option value="">Not linked to a tracked supplier</option>' + data.map(s =>
+          `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+        group.style.display = 'block';
       });
     }
 
     document.getElementById('np-customer').addEventListener('change', (e) => loadShipmentsFor(e.target.value));
+    document.getElementById('np-shipment').addEventListener('change', (e) => loadSuppliersFor(e.target.value));
 
     document.getElementById('np-submit').addEventListener('click', async () => {
       const customer_id = document.getElementById('np-customer').value;
       const shipment_id = document.getElementById('np-shipment').value;
+      const shipment_supplier_id = document.getElementById('np-supplier').value || null;
       const payee = document.getElementById('np-payee').value.trim();
       const currency = document.getElementById('np-currency').value;
       const amount = parseFloat(document.getElementById('np-amount').value);
@@ -5537,7 +5971,7 @@ const Pages = {
 
       const btn = document.getElementById('np-submit');
       btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Creating…';
-      const { data, error } = await PaymentService.create({ customer_id, shipment_id, payee, currency, amount, purpose, is_pass_through });
+      const { data, error } = await PaymentService.create({ customer_id, shipment_id, shipment_supplier_id, payee, currency, amount, purpose, is_pass_through });
       if (error) {
         errEl.textContent = error.message;
         errEl.style.display = 'block';
