@@ -1445,7 +1445,6 @@ const STATEMENT_PRINT_CSS = `
   .stmt-wh-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; }
   .stmt-wh-table th { text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #94AABB; padding: 5px 6px; border-bottom: 1px solid #E2E8F0; }
   .stmt-wh-table td { padding: 6px; border-bottom: 1px solid #F1F5F9; vertical-align: top; }
-  .stmt-wh-photo { max-width: 220px; border-radius: 6px; border: 1px solid #E2E8F0; margin-top: 4px; display: block; }
 
   @media print {
     .stmt-shipment { page-break-inside: avoid; }
@@ -1696,7 +1695,7 @@ function renderWarehouseGroups(shipmentGroups, { showShipmentInfo = true } = {})
           <td>${e.event_type === 'entry' ? 'Entry' : 'Exit'}</td>
           <td class="mono">${fmtDate(e.event_date)}</td>
           <td>${escapeHtml(e.description) || '—'}</td>
-          <td>${e.attachmentDataUrl ? ((e.attachmentMimeType||'').startsWith('image/') ? `<img class="stmt-wh-photo" src="${e.attachmentDataUrl}">` : `<a href="${e.attachmentDataUrl}" download class="stmt-rcpt-btn">📎 Download</a>`) : '—'}</td>
+          <td>${e.attachmentDataUrl ? renderAttachmentControl(e) : '—'}</td>
         </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;color:#94AABB;">No warehouse events logged.</td></tr>`;
 
       const paymentRows = directPayments.length ? directPayments.map(p => `
@@ -1704,7 +1703,7 @@ function renderWarehouseGroups(shipmentGroups, { showShipmentInfo = true } = {})
           <td class="mono">${fmtDate(p.paid_at)}</td>
           <td class="mono">${formatCurrency(p.amount, p.currency)}</td>
           <td>${escapeHtml(p.notes) || '—'}</td>
-          <td>${p.attachmentDataUrl ? ((p.attachmentMimeType||'').startsWith('image/') ? `<img class="stmt-wh-photo" src="${p.attachmentDataUrl}">` : `<a href="${p.attachmentDataUrl}" download class="stmt-rcpt-btn">📎 Download</a>`) : '—'}</td>
+          <td>${p.attachmentDataUrl ? renderAttachmentControl(p) : '—'}</td>
         </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;color:#94AABB;">No direct payments recorded.</td></tr>`;
 
       return `
