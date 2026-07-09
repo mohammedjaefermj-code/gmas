@@ -257,6 +257,20 @@ textarea.form-input { resize: vertical; min-height: 72px; }
 .stat-card.accent-green::before { background: var(--green); }
 .stat-card.accent-red::before   { background: var(--red); }
 .stat-card.accent-blue::before  { background: var(--blue); }
+/* ── Collapsible warehouse supplier cards ── */
+.wh-card { border-bottom: 1px solid var(--border); }
+.wh-card-summary {
+  list-style: none; cursor: pointer; padding: 14px 20px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.wh-card-summary::-webkit-details-marker { display: none; }
+.wh-card-summary-main { min-width: 0; flex: 1; }
+.wh-card-summary-name { font-size: 14.5px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wh-card-summary-amt { text-align: right; flex-shrink: 0; }
+.wh-card-summary-amt-val { font-family: 'DM Mono', monospace; font-size: 14px; font-weight: 600; color: var(--ink); }
+.wh-card-summary-amt-lbl { font-size: 10px; color: var(--text-secondary); margin-top: 1px; }
+.wh-card-chevron { flex-shrink: 0; color: var(--text-secondary); font-size: 12px; transition: transform 0.15s ease; }
+.wh-card[open] .wh-card-chevron { transform: rotate(180deg); }
 .stat-label {
   font-size: 10.5px;
   font-weight: 700;
@@ -1800,7 +1814,11 @@ function renderWarehouseGroups(shipmentGroups, { showShipmentInfo = true } = {})
     delivered: ['Delivered', '#E6F4EC', '#1E7E4A'],
   };
 
-  const renderSupplierCards = (supplierBlocks) => supplierBlocks.map(({ sup, events, directPayments, directTotal, gmTotal, covered, remaining }) => {
+  // Suppliers are sorted by pipeline status (In Production → Ready →
+  // Shipped → Delivered, unset last) rather than insertion order, so a
+  // reader scanning the statement sees suppliers at the same stage grouped
+  // together instead of needing to hunt through the whole list.
+  const renderSupplierCards = (supplierBlocks) => SupplierService.sortByStatus(supplierBlocks).map(({ sup, events, directPayments, directTotal, gmTotal, covered, remaining }) => {
       const displayName = escapeHtml(sup.name);
       const displayContact = sup.contact ? `<div style="color:#5A7A99;font-size:11px;margin-top:2px;">${escapeHtml(sup.contact)}</div>` : '';
       const [statusLabel, statusBg, statusFg] = statusMeta[sup.status] || [null, null, null];
@@ -3018,6 +3036,13 @@ const SupplierService = {
   },
 
   STATUS_LABELS: { in_production: 'In Production', ready: 'Ready', shipped: 'Shipped', delivered: 'Delivered' },
+  // Pipeline order for status-based sorting — suppliers with no status set
+  // are pushed to the end since they haven't entered the tracked pipeline.
+  STATUS_ORDER: { in_production: 0, ready: 1, shipped: 2, delivered: 3 },
+  sortByStatus(blocks) {
+    const rank = sup => sup.status && sup.status in SupplierService.STATUS_ORDER ? SupplierService.STATUS_ORDER[sup.status] : 99;
+    return [...blocks].sort((a, b) => rank(a.sup) - rank(b.sup) || a.sup.name.localeCompare(b.sup.name));
+  },
 
   async create(shipmentId, { name, contact, currency, total_owed, notes, status }) {
     const { data, error } = await DB.from('shipment_suppliers').insert({
@@ -4445,78 +4470,120 @@ const Pages = {
       return { sup, events, directPayments, directTotal, gmTotal, covered, remaining };
     }));
 
-    const warehouseTabHtml = `
-      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;">
-        ${canEditWarehouse ? `<button class="btn btn-ghost btn-sm" id="sd-export-warehouse">Export Warehouse Statement</button>` : ''}
-        ${canEditWarehouse ? `<button class="btn btn-amber btn-sm" id="sd-add-supplier">+ Add Supplier</button>` : ''}
-      </div>
-      ${supplierBlocks.length ? supplierBlocks.map(({ sup, events, directPayments, directTotal, gmTotal, covered, remaining }) => {
-        const statusColors = { in_production: ['var(--amber-pale)','var(--orange)'], ready: ['var(--orange-bg)','var(--orange)'], shipped: ['var(--blue-bg)','var(--blue)'], delivered: ['var(--green-bg)','var(--green)'] };
-        const [statusBg, statusFg] = statusColors[sup.status] || ['var(--paper)','var(--text-secondary)'];
-        return `
-        <div class="card-pad" style="border-bottom:1px solid var(--border);" data-supplier-id="${sup.id}">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;">
-            <div>
-              <div class="detail-val" style="font-size:15px;">${escapeHtml(sup.name)}</div>
-              ${sup.contact ? `<div style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(sup.contact)}</div>` : ''}
-              ${canEditWarehouse ? `
-              <select data-status-select="${sup.id}" style="margin-top:6px;font-size:11.5px;font-weight:600;border:none;border-radius:20px;padding:3px 10px 3px 8px;background:${statusBg};color:${statusFg};-webkit-appearance:none;appearance:none;cursor:pointer;">
-                <option value="" ${!sup.status?'selected':''}>Status: Not set</option>
-                <option value="in_production" ${sup.status==='in_production'?'selected':''}>In Production</option>
-                <option value="ready" ${sup.status==='ready'?'selected':''}>Ready</option>
-                <option value="shipped" ${sup.status==='shipped'?'selected':''}>Shipped</option>
-                <option value="delivered" ${sup.status==='delivered'?'selected':''}>Delivered</option>
-              </select>` : (sup.status ? `<span class="chip" style="margin-top:6px;background:${statusBg};color:${statusFg};">${SupplierService.STATUS_LABELS[sup.status]}</span>` : '')}
+    // Each supplier renders as a collapsed <details> row by default (name,
+    // status, headline amount) and only expands to the full ledger/tables on
+    // tap — with more than a couple of suppliers, the old always-open cards
+    // meant a wall of scrolling before reaching the second or third one.
+    const statusColorsApp = { in_production: ['var(--amber-pale)','var(--orange)'], ready: ['var(--orange-bg)','var(--orange)'], shipped: ['var(--blue-bg)','var(--blue)'], delivered: ['var(--green-bg)','var(--green)'] };
+
+    const renderSupplierCardApp = ({ sup, events, directPayments, directTotal, gmTotal, covered, remaining }) => {
+      const [statusBg, statusFg] = statusColorsApp[sup.status] || ['var(--paper)','var(--text-secondary)'];
+      const statusChip = sup.status ? `<span class="chip" style="background:${statusBg};color:${statusFg};">${SupplierService.STATUS_LABELS[sup.status]}</span>` : `<span class="chip chip-grey">Not set</span>`;
+      const { flagged, exitedSettled } = warehouseMovementFlags(sup, events, remaining);
+      const flagHtml = flagged ? ` <span style="color:var(--red);font-size:11px;font-weight:700;">⚠ Unpaid</span>` : exitedSettled ? ` <span style="color:var(--green);font-size:11px;font-weight:700;">✓ Settled</span>` : '';
+      return `
+        <details class="wh-card" data-supplier-id="${sup.id}">
+          <summary class="wh-card-summary">
+            <div class="wh-card-summary-main">
+              <div class="wh-card-summary-name">${escapeHtml(sup.name)}${flagHtml}</div>
+              <div style="margin-top:4px;">${statusChip}</div>
             </div>
-            ${canEditWarehouse ? `<div style="display:flex;gap:6px;"><button class="btn btn-ghost btn-xs" data-edit-supplier="${sup.id}">Edit</button><button class="btn btn-xs btn-danger" data-delete-supplier="${sup.id}">Delete</button></div>` : ''}
+            <div class="wh-card-summary-amt">
+              <div class="wh-card-summary-amt-val">${formatCurrency(remaining != null ? remaining : covered, sup.currency)}</div>
+              <div class="wh-card-summary-amt-lbl">${remaining != null ? 'Remaining' : 'Covered'}</div>
+            </div>
+            <span class="wh-card-chevron">&#9662;</span>
+          </summary>
+          <div class="card-pad" style="padding-top:12px;border-top:1px solid var(--border);">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;">
+              <div>
+                ${sup.contact ? `<div style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(sup.contact)}</div>` : ''}
+                ${canEditWarehouse ? `
+                <select data-status-select="${sup.id}" style="margin-top:6px;font-size:11.5px;font-weight:600;border:none;border-radius:20px;padding:3px 10px 3px 8px;background:${statusBg};color:${statusFg};-webkit-appearance:none;appearance:none;cursor:pointer;">
+                  <option value="" ${!sup.status?'selected':''}>Status: Not set</option>
+                  <option value="in_production" ${sup.status==='in_production'?'selected':''}>In Production</option>
+                  <option value="ready" ${sup.status==='ready'?'selected':''}>Ready</option>
+                  <option value="shipped" ${sup.status==='shipped'?'selected':''}>Shipped</option>
+                  <option value="delivered" ${sup.status==='delivered'?'selected':''}>Delivered</option>
+                </select>` : ''}
+              </div>
+              ${canEditWarehouse ? `<div style="display:flex;gap:6px;"><button class="btn btn-ghost btn-xs" data-edit-supplier="${sup.id}">Edit</button><button class="btn btn-xs btn-danger" data-delete-supplier="${sup.id}">Delete</button></div>` : ''}
+            </div>
+            <div class="stats-row" style="margin-bottom:12px;">
+              ${sup.total_owed != null ? `<div class="stat-card"><div class="stat-label">Total Owed</div><div class="stat-value" style="font-size:15px;">${formatCurrency(sup.total_owed, sup.currency)}</div></div>` : ''}
+              <div class="stat-card"><div class="stat-label">Customer Paid Direct</div><div class="stat-value" style="font-size:15px;">${formatCurrency(directTotal, sup.currency)}</div></div>
+              <div class="stat-card"><div class="stat-label">GM Paid</div><div class="stat-value" style="font-size:15px;">${formatCurrency(gmTotal, sup.currency)}</div></div>
+              <div class="stat-card accent-amber"><div class="stat-label">${remaining != null ? 'Remaining' : 'Total Covered'}</div><div class="stat-value" style="font-size:15px;">${formatCurrency(remaining != null ? remaining : covered, sup.currency)}</div></div>
+            </div>
+            ${canEditWarehouse ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+              <button class="btn btn-ghost btn-sm" data-log-event="${sup.id}">+ Log Warehouse Event</button>
+              <button class="btn btn-ghost btn-sm" data-log-payment="${sup.id}">+ Record Direct Payment</button>
+            </div>` : ''}
+            <div class="table-wrap" style="margin-bottom:8px;">
+              <table>
+                <thead><tr><th>Event</th><th>Date</th><th>Description</th><th></th></tr></thead>
+                <tbody>
+                  ${events.length ? events.map(e => `
+                    <tr class="row-grey">
+                      <td><span class="chip chip-${e.event_type === 'entry' ? 'green' : 'blue'}">${e.event_type === 'entry' ? 'Entry' : 'Exit'}</span></td>
+                      <td class="mono">${e.event_date}</td>
+                      <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(e.description)||'—'}</td>
+                      <td style="white-space:nowrap;">
+                        ${e.attachment_path ? `<button class="btn btn-ghost btn-xs" data-view-attachment="${e.attachment_path}">View photo</button>` : ''}
+                        ${canEditWarehouse ? `<button class="btn btn-ghost btn-xs" data-edit-event="${e.id}">Edit</button><button class="btn btn-xs btn-danger" data-del-event="${e.id}">Delete</button>` : ''}
+                      </td>
+                    </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--text-muted);">No warehouse events logged yet.</td></tr>`}
+                </tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Direct Payment Date</th><th class="r">Amount</th><th>Notes</th><th></th></tr></thead>
+                <tbody>
+                  ${directPayments.length ? directPayments.map(p => `
+                    <tr class="row-grey">
+                      <td class="mono">${p.paid_at}</td>
+                      <td class="mono r">${formatCurrency(p.amount, p.currency)}</td>
+                      <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(p.notes)||'—'}</td>
+                      <td style="white-space:nowrap;">
+                        ${p.attachment_path ? `<button class="btn btn-ghost btn-xs" data-view-attachment="${p.attachment_path}">View receipt</button>` : ''}
+                        ${canEditWarehouse ? `<button class="btn btn-ghost btn-xs" data-edit-payment="${p.id}">Edit</button><button class="btn btn-xs btn-danger" data-del-payment="${p.id}">Delete</button>` : ''}
+                      </td>
+                    </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--text-muted);">No direct payments recorded yet.</td></tr>`}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div class="stats-row" style="margin-bottom:12px;">
-            ${sup.total_owed != null ? `<div class="stat-card"><div class="stat-label">Total Owed</div><div class="stat-value" style="font-size:15px;">${formatCurrency(sup.total_owed, sup.currency)}</div></div>` : ''}
-            <div class="stat-card"><div class="stat-label">Customer Paid Direct</div><div class="stat-value" style="font-size:15px;">${formatCurrency(directTotal, sup.currency)}</div></div>
-            <div class="stat-card"><div class="stat-label">GM Paid</div><div class="stat-value" style="font-size:15px;">${formatCurrency(gmTotal, sup.currency)}</div></div>
-            <div class="stat-card accent-amber"><div class="stat-label">${remaining != null ? 'Remaining' : 'Total Covered'}</div><div class="stat-value" style="font-size:15px;">${formatCurrency(remaining != null ? remaining : covered, sup.currency)}</div></div>
-          </div>
-          ${canEditWarehouse ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-            <button class="btn btn-ghost btn-sm" data-log-event="${sup.id}">+ Log Warehouse Event</button>
-            <button class="btn btn-ghost btn-sm" data-log-payment="${sup.id}">+ Record Direct Payment</button>
-          </div>` : ''}
-          <div class="table-wrap" style="margin-bottom:8px;">
-            <table>
-              <thead><tr><th>Event</th><th>Date</th><th>Description</th><th></th></tr></thead>
-              <tbody>
-                ${events.length ? events.map(e => `
-                  <tr class="row-grey">
-                    <td><span class="chip chip-${e.event_type === 'entry' ? 'green' : 'blue'}">${e.event_type === 'entry' ? 'Entry' : 'Exit'}</span></td>
-                    <td class="mono">${e.event_date}</td>
-                    <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(e.description)||'—'}</td>
-                    <td style="white-space:nowrap;">
-                      ${e.attachment_path ? `<button class="btn btn-ghost btn-xs" data-view-attachment="${e.attachment_path}">View photo</button>` : ''}
-                      ${canEditWarehouse ? `<button class="btn btn-ghost btn-xs" data-edit-event="${e.id}">Edit</button><button class="btn btn-xs btn-danger" data-del-event="${e.id}">Delete</button>` : ''}
-                    </td>
-                  </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--text-muted);">No warehouse events logged yet.</td></tr>`}
-              </tbody>
-            </table>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Direct Payment Date</th><th class="r">Amount</th><th>Notes</th><th></th></tr></thead>
-              <tbody>
-                ${directPayments.length ? directPayments.map(p => `
-                  <tr class="row-grey">
-                    <td class="mono">${p.paid_at}</td>
-                    <td class="mono r">${formatCurrency(p.amount, p.currency)}</td>
-                    <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(p.notes)||'—'}</td>
-                    <td style="white-space:nowrap;">
-                      ${p.attachment_path ? `<button class="btn btn-ghost btn-xs" data-view-attachment="${p.attachment_path}">View receipt</button>` : ''}
-                      ${canEditWarehouse ? `<button class="btn btn-ghost btn-xs" data-edit-payment="${p.id}">Edit</button><button class="btn btn-xs btn-danger" data-del-payment="${p.id}">Delete</button>` : ''}
-                    </td>
-                  </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--text-muted);">No direct payments recorded yet.</td></tr>`}
-              </tbody>
-            </table>
-          </div>
-        </div>`;
-      }).join('') : `
-      <div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div><div class="empty-title">No suppliers tracked for this shipment</div><div class="empty-desc">Entirely optional — add a supplier only if you're collecting goods at the warehouse on this customer's behalf.</div></div>`}
+        </details>`;
+    };
+
+    const supplierSortersApp = {
+      status: blocks => SupplierService.sortByStatus(blocks),
+      name: blocks => [...blocks].sort((a, b) => a.sup.name.localeCompare(b.sup.name)),
+      remaining: blocks => [...blocks].sort((a, b) => (b.remaining ?? -Infinity) - (a.remaining ?? -Infinity)),
+    };
+    const renderSupplierListApp = (sortMode) => (supplierSortersApp[sortMode] || supplierSortersApp.status)(supplierBlocks).map(renderSupplierCardApp).join('');
+
+    const warehouseTabHtml = `
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+        ${supplierBlocks.length ? `
+        <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-secondary);">
+          Sort:
+          <select id="sd-wh-sort" style="font-size:12.5px;border:1px solid var(--border);border-radius:6px;padding:4px 8px;background:var(--card,#fff);cursor:pointer;">
+            <option value="status">Status</option>
+            <option value="name">Name (A&ndash;Z)</option>
+            <option value="remaining">Amount owed (highest first)</option>
+          </select>
+        </label>` : `<span></span>`}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${canEditWarehouse ? `<button class="btn btn-ghost btn-sm" id="sd-export-warehouse">Export Warehouse Statement</button>` : ''}
+          ${canEditWarehouse ? `<button class="btn btn-amber btn-sm" id="sd-add-supplier">+ Add Supplier</button>` : ''}
+        </div>
+      </div>
+      <div id="sd-wh-cards">
+        ${supplierBlocks.length ? renderSupplierListApp('status') : `
+        <div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div><div class="empty-title">No suppliers tracked for this shipment</div><div class="empty-desc">Entirely optional — add a supplier only if you're collecting goods at the warehouse on this customer's behalf.</div></div>`}
+      </div>
     `;
 
     const tabContent = {
@@ -4556,12 +4623,12 @@ const Pages = {
     };
     bindFundingTabEvents();
 
-    const bindWarehouseTabEvents = () => {
-      const exportBtn = el.querySelector('#sd-export-warehouse');
-      if (exportBtn) exportBtn.addEventListener('click', () => Pages.warehouseExportScopeModal(shipment));
-      const addBtn = el.querySelector('#sd-add-supplier');
-      if (addBtn) addBtn.addEventListener('click', () => Pages.addSupplierModal(shipment, () => Pages.shipmentDetail(el, shipmentId, ctx)));
-      el.querySelectorAll('[data-status-select]').forEach(sel => {
+    // Card-level listeners are scoped to whatever container is passed in
+    // (rather than always the whole `el`) so the sort dropdown can just
+    // re-render #sd-wh-cards and rebind that subtree, without a full page
+    // reload that would also collapse every other open tab state.
+    const bindSupplierCardEvents = (scope) => {
+      scope.querySelectorAll('[data-status-select]').forEach(sel => {
         sel.addEventListener('change', async () => {
           sel.disabled = true;
           const { error } = await SupplierService.setStatus(sel.dataset.statusSelect, sel.value);
@@ -4570,13 +4637,13 @@ const Pages = {
           Pages.shipmentDetail(el, shipmentId, ctx);
         });
       });
-      el.querySelectorAll('[data-edit-supplier]').forEach(btn => {
+      scope.querySelectorAll('[data-edit-supplier]').forEach(btn => {
         btn.addEventListener('click', () => {
           const sup = (suppliers||[]).find(s => s.id === btn.dataset.editSupplier);
           Pages.editSupplierModal(sup, () => Pages.shipmentDetail(el, shipmentId, ctx));
         });
       });
-      el.querySelectorAll('[data-delete-supplier]').forEach(btn => {
+      scope.querySelectorAll('[data-delete-supplier]').forEach(btn => {
         btn.addEventListener('click', async () => {
           const sup = (suppliers||[]).find(s => s.id === btn.dataset.deleteSupplier);
           if (!confirm(`Delete supplier "${sup ? sup.name : 'this supplier'}"? This also removes every warehouse event and direct payment logged under it. This cannot be undone.`)) return;
@@ -4587,7 +4654,7 @@ const Pages = {
           Pages.shipmentDetail(el, shipmentId, ctx);
         });
       });
-      el.querySelectorAll('[data-edit-event]').forEach(btn => {
+      scope.querySelectorAll('[data-edit-event]').forEach(btn => {
         btn.addEventListener('click', () => {
           for (const b of supplierBlocks) {
             const ev = b.events.find(e => e.id === btn.dataset.editEvent);
@@ -4595,7 +4662,7 @@ const Pages = {
           }
         });
       });
-      el.querySelectorAll('[data-del-event]').forEach(btn => {
+      scope.querySelectorAll('[data-del-event]').forEach(btn => {
         btn.addEventListener('click', async () => {
           if (!confirm('Delete this warehouse event? This cannot be undone.')) return;
           btn.disabled = true;
@@ -4605,7 +4672,7 @@ const Pages = {
           Pages.shipmentDetail(el, shipmentId, ctx);
         });
       });
-      el.querySelectorAll('[data-edit-payment]').forEach(btn => {
+      scope.querySelectorAll('[data-edit-payment]').forEach(btn => {
         btn.addEventListener('click', () => {
           for (const b of supplierBlocks) {
             const p = b.directPayments.find(p => p.id === btn.dataset.editPayment);
@@ -4613,7 +4680,7 @@ const Pages = {
           }
         });
       });
-      el.querySelectorAll('[data-del-payment]').forEach(btn => {
+      scope.querySelectorAll('[data-del-payment]').forEach(btn => {
         btn.addEventListener('click', async () => {
           if (!confirm('Delete this direct payment record? This cannot be undone.')) return;
           btn.disabled = true;
@@ -4623,19 +4690,19 @@ const Pages = {
           Pages.shipmentDetail(el, shipmentId, ctx);
         });
       });
-      el.querySelectorAll('[data-log-event]').forEach(btn => {
+      scope.querySelectorAll('[data-log-event]').forEach(btn => {
         btn.addEventListener('click', () => {
           const sup = (suppliers||[]).find(s => s.id === btn.dataset.logEvent);
           Pages.warehouseEventModal(shipment, sup, () => Pages.shipmentDetail(el, shipmentId, ctx));
         });
       });
-      el.querySelectorAll('[data-log-payment]').forEach(btn => {
+      scope.querySelectorAll('[data-log-payment]').forEach(btn => {
         btn.addEventListener('click', () => {
           const sup = (suppliers||[]).find(s => s.id === btn.dataset.logPayment);
           Pages.supplierDirectPaymentModal(shipment, sup, () => Pages.shipmentDetail(el, shipmentId, ctx));
         });
       });
-      el.querySelectorAll('[data-view-attachment]').forEach(btn => {
+      scope.querySelectorAll('[data-view-attachment]').forEach(btn => {
         btn.addEventListener('click', async () => {
           btn.disabled = true;
           const { url, error } = await DB.getWarehouseAttachmentUrl(btn.dataset.viewAttachment);
@@ -4644,6 +4711,20 @@ const Pages = {
           window.open(url, '_blank');
         });
       });
+    };
+
+    const bindWarehouseTabEvents = () => {
+      const exportBtn = el.querySelector('#sd-export-warehouse');
+      if (exportBtn) exportBtn.addEventListener('click', () => Pages.warehouseExportScopeModal(shipment));
+      const addBtn = el.querySelector('#sd-add-supplier');
+      if (addBtn) addBtn.addEventListener('click', () => Pages.addSupplierModal(shipment, () => Pages.shipmentDetail(el, shipmentId, ctx)));
+      const sortSel = el.querySelector('#sd-wh-sort');
+      if (sortSel) sortSel.addEventListener('change', () => {
+        const cardsEl = el.querySelector('#sd-wh-cards');
+        cardsEl.innerHTML = renderSupplierListApp(sortSel.value);
+        bindSupplierCardEvents(cardsEl);
+      });
+      bindSupplierCardEvents(el);
     };
 
     el.querySelectorAll('#sd-tabs .tab-strip-btn').forEach(btn => {
