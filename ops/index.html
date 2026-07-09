@@ -2841,6 +2841,19 @@ const SupplierService = {
     return { data, error: error ? { message: error.message } : null };
   },
 
+  // Deletes a supplier and everything logged under it. Children are removed
+  // explicitly first rather than relying on a DB-side cascade, since that
+  // isn't guaranteed here — this is the one place both child tables get
+  // cleared out together.
+  async delete(id) {
+    const { error: eventsErr } = await DB.from('warehouse_events').delete().eq('shipment_supplier_id', id);
+    if (eventsErr) return { error: { message: eventsErr.message } };
+    const { error: paymentsErr } = await DB.from('supplier_direct_payments').delete().eq('shipment_supplier_id', id);
+    if (paymentsErr) return { error: { message: paymentsErr.message } };
+    const { error } = await DB.from('shipment_suppliers').delete().eq('id', id);
+    return { error: error ? { message: error.message } : null };
+  },
+
   async listEvents(shipmentSupplierId) {
     const { data, error } = await DB.from('warehouse_events')
       .select('*').eq('shipment_supplier_id', shipmentSupplierId).order('event_date');
@@ -2856,6 +2869,21 @@ const SupplierService = {
     return { data, error: error ? { message: error.message } : null };
   },
 
+  // attachment_path is only included in the update when the caller passes a new
+  // one (i.e. the user chose a replacement photo) — omitting the key entirely
+  // leaves the existing attachment_path untouched rather than clearing it.
+  async updateEvent(id, { event_type, event_date, description, attachment_path }) {
+    const payload = { event_type, event_date: event_date || undefined, description: description || null };
+    if (attachment_path !== undefined) payload.attachment_path = attachment_path;
+    const { data, error } = await DB.from('warehouse_events').update(payload).eq('id', id).select().single();
+    return { data, error: error ? { message: error.message } : null };
+  },
+
+  async deleteEvent(id) {
+    const { error } = await DB.from('warehouse_events').delete().eq('id', id);
+    return { error: error ? { message: error.message } : null };
+  },
+
   async listDirectPayments(shipmentSupplierId) {
     const { data, error } = await DB.from('supplier_direct_payments')
       .select('*').eq('shipment_supplier_id', shipmentSupplierId).order('paid_at');
@@ -2869,6 +2897,18 @@ const SupplierService = {
       attachment_path: attachment_path || null, created_by: State.user.id,
     }).select().single();
     return { data, error: error ? { message: error.message } : null };
+  },
+
+  async updateDirectPayment(id, { currency, amount, paid_at, notes, attachment_path }) {
+    const payload = { currency, amount, paid_at: paid_at || undefined, notes: notes || null };
+    if (attachment_path !== undefined) payload.attachment_path = attachment_path;
+    const { data, error } = await DB.from('supplier_direct_payments').update(payload).eq('id', id).select().single();
+    return { data, error: error ? { message: error.message } : null };
+  },
+
+  async deleteDirectPayment(id) {
+    const { error } = await DB.from('supplier_direct_payments').delete().eq('id', id);
+    return { error: error ? { message: error.message } : null };
   },
 
   // GM's own payments toward this supplier — executed Payment Instructions
@@ -4223,7 +4263,7 @@ const Pages = {
                 <option value="delivered" ${sup.status==='delivered'?'selected':''}>Delivered</option>
               </select>` : (sup.status ? `<span class="chip" style="margin-top:6px;background:${statusBg};color:${statusFg};">${SupplierService.STATUS_LABELS[sup.status]}</span>` : '')}
             </div>
-            ${canEditWarehouse ? `<button class="btn btn-ghost btn-xs" data-edit-supplier="${sup.id}">Edit</button>` : ''}
+            ${canEditWarehouse ? `<div style="display:flex;gap:6px;"><button class="btn btn-ghost btn-xs" data-edit-supplier="${sup.id}">Edit</button><button class="btn btn-xs btn-danger" data-delete-supplier="${sup.id}">Delete</button></div>` : ''}
           </div>
           <div class="stats-row" style="margin-bottom:12px;">
             ${sup.total_owed != null ? `<div class="stat-card"><div class="stat-label">Total Owed</div><div class="stat-value" style="font-size:15px;">${formatCurrency(sup.total_owed, sup.currency)}</div></div>` : ''}
@@ -4244,7 +4284,10 @@ const Pages = {
                     <td><span class="chip chip-${e.event_type === 'entry' ? 'green' : 'blue'}">${e.event_type === 'entry' ? 'Entry' : 'Exit'}</span></td>
                     <td class="mono">${e.event_date}</td>
                     <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(e.description)||'—'}</td>
-                    <td>${e.attachment_path ? `<button class="btn btn-ghost btn-xs" data-view-attachment="${e.attachment_path}">View photo</button>` : ''}</td>
+                    <td style="white-space:nowrap;">
+                      ${e.attachment_path ? `<button class="btn btn-ghost btn-xs" data-view-attachment="${e.attachment_path}">View photo</button>` : ''}
+                      ${canEditWarehouse ? `<button class="btn btn-ghost btn-xs" data-edit-event="${e.id}">Edit</button><button class="btn btn-xs btn-danger" data-del-event="${e.id}">Delete</button>` : ''}
+                    </td>
                   </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--text-muted);">No warehouse events logged yet.</td></tr>`}
               </tbody>
             </table>
@@ -4258,7 +4301,10 @@ const Pages = {
                     <td class="mono">${p.paid_at}</td>
                     <td class="mono r">${formatCurrency(p.amount, p.currency)}</td>
                     <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(p.notes)||'—'}</td>
-                    <td>${p.attachment_path ? `<button class="btn btn-ghost btn-xs" data-view-attachment="${p.attachment_path}">View receipt</button>` : ''}</td>
+                    <td style="white-space:nowrap;">
+                      ${p.attachment_path ? `<button class="btn btn-ghost btn-xs" data-view-attachment="${p.attachment_path}">View receipt</button>` : ''}
+                      ${canEditWarehouse ? `<button class="btn btn-ghost btn-xs" data-edit-payment="${p.id}">Edit</button><button class="btn btn-xs btn-danger" data-del-payment="${p.id}">Delete</button>` : ''}
+                    </td>
                   </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--text-muted);">No direct payments recorded yet.</td></tr>`}
               </tbody>
             </table>
@@ -4323,6 +4369,53 @@ const Pages = {
         btn.addEventListener('click', () => {
           const sup = (suppliers||[]).find(s => s.id === btn.dataset.editSupplier);
           Pages.editSupplierModal(sup, () => Pages.shipmentDetail(el, shipmentId, ctx));
+        });
+      });
+      el.querySelectorAll('[data-delete-supplier]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const sup = (suppliers||[]).find(s => s.id === btn.dataset.deleteSupplier);
+          if (!confirm(`Delete supplier "${sup ? sup.name : 'this supplier'}"? This also removes every warehouse event and direct payment logged under it. This cannot be undone.`)) return;
+          btn.disabled = true;
+          const { error } = await SupplierService.delete(btn.dataset.deleteSupplier);
+          if (error) { Toast.error(error.message); btn.disabled = false; return; }
+          Toast.success('Supplier deleted.');
+          Pages.shipmentDetail(el, shipmentId, ctx);
+        });
+      });
+      el.querySelectorAll('[data-edit-event]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          for (const b of supplierBlocks) {
+            const ev = b.events.find(e => e.id === btn.dataset.editEvent);
+            if (ev) { Pages.editWarehouseEventModal(shipment, b.sup, ev, () => Pages.shipmentDetail(el, shipmentId, ctx)); break; }
+          }
+        });
+      });
+      el.querySelectorAll('[data-del-event]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Delete this warehouse event? This cannot be undone.')) return;
+          btn.disabled = true;
+          const { error } = await SupplierService.deleteEvent(btn.dataset.delEvent);
+          if (error) { Toast.error(error.message); btn.disabled = false; return; }
+          Toast.success('Warehouse event deleted.');
+          Pages.shipmentDetail(el, shipmentId, ctx);
+        });
+      });
+      el.querySelectorAll('[data-edit-payment]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          for (const b of supplierBlocks) {
+            const p = b.directPayments.find(p => p.id === btn.dataset.editPayment);
+            if (p) { Pages.editSupplierDirectPaymentModal(shipment, b.sup, p, () => Pages.shipmentDetail(el, shipmentId, ctx)); break; }
+          }
+        });
+      });
+      el.querySelectorAll('[data-del-payment]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Delete this direct payment record? This cannot be undone.')) return;
+          btn.disabled = true;
+          const { error } = await SupplierService.deleteDirectPayment(btn.dataset.delPayment);
+          if (error) { Toast.error(error.message); btn.disabled = false; return; }
+          Toast.success('Direct payment deleted.');
+          Pages.shipmentDetail(el, shipmentId, ctx);
         });
       });
       el.querySelectorAll('[data-log-event]').forEach(btn => {
@@ -5487,6 +5580,68 @@ const Pages = {
     });
   },
 
+  editWarehouseEventModal(shipment, supplier, event, onSaved) {
+    const id = Modal.open({
+      title: 'Edit Warehouse Event',
+      subtitle: supplier.name,
+      body: `
+        <div id="ewe-error" class="form-error-msg" style="display:none;"></div>
+        <div class="form-group">
+          <label class="form-label">Event</label>
+          <select class="form-select" id="ewe-type">
+            <option value="entry" ${event.event_type==='entry'?'selected':''}>Entry — goods arrived at warehouse</option>
+            <option value="exit" ${event.event_type==='exit'?'selected':''}>Exit — goods left warehouse</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Date</label>
+          <input type="date" class="form-input" id="ewe-date" value="${event.event_date}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description <span class="opt">(optional)</span></label>
+          <textarea class="form-input" id="ewe-desc" placeholder="What arrived/left, quantity, condition notes…">${escapeHtml(event.description)||''}</textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Photo <span class="opt">(optional — leave blank to keep current)</span></label>
+          ${event.attachment_path ? `<div style="margin-bottom:6px;"><button type="button" class="btn btn-ghost btn-xs" id="ewe-view-current">View current photo</button></div>` : ''}
+          <input type="file" accept="image/*" class="form-input" id="ewe-photo">
+        </div>`,
+      footer: `<button class="btn btn-ghost" onclick="Modal.closeTop()">Cancel</button><button class="btn btn-amber" id="ewe-submit">Save Changes</button>`,
+    });
+    const viewCurrentBtn = document.getElementById('ewe-view-current');
+    if (viewCurrentBtn) viewCurrentBtn.addEventListener('click', async () => {
+      viewCurrentBtn.disabled = true;
+      const { url, error } = await DB.getWarehouseAttachmentUrl(event.attachment_path);
+      viewCurrentBtn.disabled = false;
+      if (error || !url) { Toast.error(error?.message || 'Could not load attachment.'); return; }
+      window.open(url, '_blank');
+    });
+    document.getElementById('ewe-submit').addEventListener('click', async () => {
+      const event_type = document.getElementById('ewe-type').value;
+      const event_date = document.getElementById('ewe-date').value;
+      const description = document.getElementById('ewe-desc').value.trim();
+      const fileInput = document.getElementById('ewe-photo');
+      const errEl = document.getElementById('ewe-error');
+      if (!event_date) { errEl.textContent = 'Please select a date.'; errEl.style.display = 'block'; return; }
+
+      const btn = document.getElementById('ewe-submit');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Saving…';
+
+      let attachment_path;
+      if (fileInput.files && fileInput.files[0]) {
+        const { path, error: uploadErr } = await DB.uploadWarehouseAttachment(supplier.id, fileInput.files[0]);
+        if (uploadErr) { errEl.textContent = 'Photo upload failed: ' + uploadErr.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Save Changes'; return; }
+        attachment_path = path;
+      }
+
+      const { error } = await SupplierService.updateEvent(event.id, { event_type, event_date, description, attachment_path });
+      if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Save Changes'; return; }
+      Toast.success('Warehouse event updated.');
+      Modal.close(id);
+      if (onSaved) onSaved();
+    });
+  },
+
   supplierDirectPaymentModal(shipment, supplier, onSaved) {
     const today = new Date().toISOString().slice(0, 10);
     const id = Modal.open({
@@ -5534,6 +5689,66 @@ const Pages = {
       const { error } = await SupplierService.createDirectPayment(shipment.id, supplier.id, { currency: supplier.currency, amount, paid_at, notes, attachment_path });
       if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Record Payment'; return; }
       Toast.success('Direct payment recorded.');
+      Modal.close(id);
+      if (onSaved) onSaved();
+    });
+  },
+
+  editSupplierDirectPaymentModal(shipment, supplier, payment, onSaved) {
+    const id = Modal.open({
+      title: 'Edit Direct Payment',
+      subtitle: `${supplier.name} — paid by the customer directly, outside GMAS`,
+      body: `
+        <div id="esp-error" class="form-error-msg" style="display:none;"></div>
+        <div class="form-group">
+          <label class="form-label">Amount (${payment.currency})</label>
+          <input type="number" step="0.01" class="form-input" id="esp-amount" value="${payment.amount}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Date Paid</label>
+          <input type="date" class="form-input" id="esp-date" value="${payment.paid_at}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notes <span class="opt">(optional)</span></label>
+          <textarea class="form-input" id="esp-notes" placeholder="Reference from the customer's receipt, etc.">${escapeHtml(payment.notes)||''}</textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Receipt Photo <span class="opt">(optional — leave blank to keep current)</span></label>
+          ${payment.attachment_path ? `<div style="margin-bottom:6px;"><button type="button" class="btn btn-ghost btn-xs" id="esp-view-current">View current receipt</button></div>` : ''}
+          <input type="file" accept="image/*" class="form-input" id="esp-photo">
+        </div>`,
+      footer: `<button class="btn btn-ghost" onclick="Modal.closeTop()">Cancel</button><button class="btn btn-amber" id="esp-submit">Save Changes</button>`,
+    });
+    const viewCurrentBtn = document.getElementById('esp-view-current');
+    if (viewCurrentBtn) viewCurrentBtn.addEventListener('click', async () => {
+      viewCurrentBtn.disabled = true;
+      const { url, error } = await DB.getWarehouseAttachmentUrl(payment.attachment_path);
+      viewCurrentBtn.disabled = false;
+      if (error || !url) { Toast.error(error?.message || 'Could not load attachment.'); return; }
+      window.open(url, '_blank');
+    });
+    document.getElementById('esp-submit').addEventListener('click', async () => {
+      const amount = parseFloat(document.getElementById('esp-amount').value);
+      const paid_at = document.getElementById('esp-date').value;
+      const notes = document.getElementById('esp-notes').value.trim();
+      const fileInput = document.getElementById('esp-photo');
+      const errEl = document.getElementById('esp-error');
+      if (!amount || amount <= 0) { errEl.textContent = 'Please enter a valid amount.'; errEl.style.display = 'block'; return; }
+      if (!paid_at) { errEl.textContent = 'Please select a date.'; errEl.style.display = 'block'; return; }
+
+      const btn = document.getElementById('esp-submit');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Saving…';
+
+      let attachment_path;
+      if (fileInput.files && fileInput.files[0]) {
+        const { path, error: uploadErr } = await DB.uploadWarehouseAttachment(supplier.id, fileInput.files[0]);
+        if (uploadErr) { errEl.textContent = 'Photo upload failed: ' + uploadErr.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Save Changes'; return; }
+        attachment_path = path;
+      }
+
+      const { error } = await SupplierService.updateDirectPayment(payment.id, { currency: payment.currency, amount, paid_at, notes, attachment_path });
+      if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; btn.disabled = false; btn.textContent = 'Save Changes'; return; }
+      Toast.success('Direct payment updated.');
       Modal.close(id);
       if (onSaved) onSaved();
     });
