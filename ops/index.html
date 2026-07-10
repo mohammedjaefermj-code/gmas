@@ -1442,79 +1442,55 @@ const STATEMENT_PRINT_CSS = `
   }
   .stmt-nav-btn.active { background: #0E1C2F; color: #fff; border-color: #0E1C2F; }
 
-  /* ── Warehouse page — supplier cards ──
-     break-inside: avoid so a card never splits across a print page boundary. */
+  /* ── Warehouse page — simplified supplier rows (redesigned Jul 2026) ──
+     break-inside: avoid so a card never splits across a print page boundary.
+     One figure per supplier, one merged chronological timeline — replaces
+     the old 4-stat grid + two separate event/payment tables. ── */
   .stmt-wh-supplier {
-    border: 1px solid #E2E8F0; border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; background: #fff;
+    padding: 14px 0; border-bottom: 1px solid #EEF1F4;
     break-inside: avoid; page-break-inside: avoid;
   }
-  .stmt-wh-supplier.settled { background: #FAFBFC; }
-  .stmt-wh-supplier.flagged { border-color: #F0AEA8; }
+  .stmt-wh-supplier:last-child { border-bottom: none; }
+  .stmt-wh-supplier-top { display: flex; justify-content: space-between; align-items: flex-start; }
+  .stmt-wh-supplier-name { font-family: 'Source Serif 4', serif; font-weight: 600; font-size: 14px; color: #0E1C2F; }
   .stmt-wh-badge {
-    display: inline-block; padding: 3px 10px; border-radius: 20px;
-    font-size: 10px; font-weight: 700; letter-spacing: 0.02em; margin-top: 4px;
+    display: inline-block; margin-left: 8px; padding: 2px 9px; border-radius: 20px;
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.02em; vertical-align: middle;
   }
-  .stmt-wh-stats {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0;
+  .stmt-wh-badge.owed { background: #FDECEA; color: #B3261E; }
+  .stmt-wh-badge.paid { background: #E6F4EC; color: #1E7E4A; }
+  .stmt-wh-badge.open { background: #F1F5F9; color: #94AABB; }
+
+  .stmt-wh-supplier-figures { text-align: right; }
+  .stmt-wh-fig { font-family: 'DM Mono', monospace; font-size: 14px; font-weight: 700; }
+  .stmt-wh-fig.owed-amt { color: #B3261E; }
+  .stmt-wh-fig.clear-amt { color: #1E7E4A; }
+  .stmt-wh-fig-sub { font-size: 10px; color: #94AABB; margin-top: 1px; }
+
+  .stmt-wh-timeline { margin-top: 8px; }
+  .stmt-wh-tl-row { display: flex; gap: 10px; align-items: baseline; font-size: 11.5px; padding: 3px 0; color: #3D5872; }
+  .stmt-wh-tl-date { color: #94AABB; width: 66px; flex-shrink: 0; }
+  .stmt-wh-tl-desc { flex: 1; }
+  .stmt-wh-tl-amt { color: #0E1C2F; font-weight: 500; }
+  .stmt-wh-tl-photo { flex-shrink: 0; }
+  .stmt-wh-empty { font-size: 11px; color: #94AABB; margin-top: 6px; }
+
+  /* ── Per-currency warehouse summary: one figure per currency, replacing
+     the old totals strip + movement alerts + quick-scan index. A currency
+     only gets a card here if at least one tracked supplier is billed in it. ── */
+  .stmt-wh-summary { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 24px; }
+  .stmt-wh-summary-card {
+    flex: 1; min-width: 160px; border-radius: 10px; padding: 16px 18px;
+    border: 1px solid #E2E8F0; background: #FBFCFD; break-inside: avoid;
   }
-  .stmt-wh-stat { border: 1px solid #E2E8F0; border-radius: 6px; padding: 8px 10px; }
-  .stmt-wh-stat-label { font-size: 9px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #94AABB; }
-  .stmt-wh-stat-value { font-family: 'DM Mono', monospace; font-size: 13px; color: #0E1C2F; margin-top: 2px; }
-  .stmt-wh-stat.owed { background: #FDF3E3; border-color: #E7CE9E; }
-  .stmt-wh-stat.owed .stmt-wh-stat-label { color: #A8710F; }
-  .stmt-wh-stat.owed .stmt-wh-stat-value { color: #A8710F; font-weight: 700; }
-  .stmt-wh-stat.flagged { background: #FDECEA; border-color: #F0AEA8; }
-  .stmt-wh-stat.flagged .stmt-wh-stat-label { color: #B3261E; }
-  .stmt-wh-stat.flagged .stmt-wh-stat-value { color: #B3261E; font-weight: 700; }
-  .stmt-wh-stat.clear { background: #E6F4EC; border-color: #BFE3CC; }
-  .stmt-wh-stat.clear .stmt-wh-stat-label { color: #1E7E4A; }
-  .stmt-wh-stat.clear .stmt-wh-stat-value { color: #1E7E4A; }
-  .stmt-wh-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; }
-  .stmt-wh-table th { text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #94AABB; padding: 5px 6px; border-bottom: 1px solid #E2E8F0; }
-  .stmt-wh-table td { padding: 6px; border-bottom: 1px solid #F1F5F9; vertical-align: top; }
-
-  .flag-pill, .settled-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; font-weight: 700; padding: 3px 9px; border-radius: 20px; margin-left: 6px; }
-  .flag-pill { background: #FDECEA; color: #B3261E; }
-  .settled-pill { background: #E6F4EC; color: #1E7E4A; }
-
-  /* ── Per-currency warehouse summary: totals strip, movement alerts,
-     quick-scan index. A currency only gets a group here if at least one
-     tracked supplier is billed in it — currencies with nothing to show
-     never render an (empty) section. ── */
-  .stmt-currency-group { margin-bottom: 24px; break-inside: avoid; }
-  .stmt-currency-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-  .stmt-currency-chip { font-family: 'DM Mono', monospace; font-size: 11px; font-weight: 700; background: #0E1C2F; color: #fff; padding: 3px 10px; border-radius: 4px; letter-spacing: 0.04em; }
-  .stmt-currency-head .line { flex: 1; border-top: 1px solid #E2E8F0; }
-
-  .stmt-totals-strip { display: grid; grid-template-columns: 1fr 1fr 1fr 1.2fr; gap: 10px; margin-bottom: 12px; }
-  .stmt-total-card { border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px; background: #FBFCFD; }
-  .stmt-total-card .lbl { font-size: 9px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5A7A99; }
-  .stmt-total-card .fig { font-family: 'DM Mono', monospace; font-size: 15px; font-weight: 500; margin-top: 4px; }
-  .stmt-total-card.remaining { background: #FDF3E3; border-color: #C8963E; }
-  .stmt-total-card.remaining .lbl { color: #A87830; }
-  .stmt-total-card.remaining .fig { color: #8A5A18; font-weight: 700; }
-
-  .stmt-openended-note { font-size: 10px; color: #94AABB; margin: 0 0 12px; }
-
-  .stmt-wh-alerts { border: 1px solid #E2E8F0; border-radius: 8px; margin-bottom: 14px; overflow: hidden; break-inside: avoid; }
-  .stmt-wh-alert-row { padding: 9px 14px; border-bottom: 1px solid #F1F5F9; font-size: 11px; }
-  .stmt-wh-alert-row:last-child { border-bottom: none; }
-  .stmt-wh-alert-row.info { background: #F0F6FB; color: #2C5A8C; }
-  .stmt-wh-alert-row.good { background: #F1FBF5; color: #1E7E4A; }
-  .stmt-wh-alert-row.bad  { background: #FDECEA; color: #B3261E; font-weight: 600; }
-
-  table.stmt-index { width: 100%; border-collapse: collapse; margin-bottom: 4px; border: 1px solid #E2E8F0; border-radius: 8px; overflow: hidden; }
-  table.stmt-index th { text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #5A7A99; padding: 7px 12px; background: #FBFCFD; border-bottom: 1px solid #E2E8F0; }
-  table.stmt-index th.r, table.stmt-index td.r { text-align: right; }
-  table.stmt-index td { padding: 7px 12px; border-bottom: 1px solid #F1F5F9; font-size: 11.5px; }
-  table.stmt-index tr:last-child td { border-bottom: none; }
-  table.stmt-index tr.settled-row td { color: #AAB8C4; }
-  table.stmt-index .idx-name { font-weight: 600; color: #0E1C2F; }
-  table.stmt-index tr.settled-row .idx-name { color: #94AABB; font-weight: 500; }
-  .idx-remaining { font-family: 'DM Mono', monospace; font-weight: 700; }
-  .idx-remaining.owed { color: #A8710F; }
-  .idx-remaining.flagged { color: #B3261E; }
-  .idx-remaining.clear { color: #1E7E4A; font-weight: 500; }
+  .stmt-wh-summary-card.owe { border-color: #E7B7A8; background: #FDF4F1; }
+  .stmt-wh-summary-card.clear { border-color: #A9D6BC; background: #F2FAF5; }
+  .stmt-wh-summary-ccy { font-family: 'DM Mono', monospace; font-size: 11px; font-weight: 600; color: #94AABB; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .stmt-wh-summary-label { font-size: 11px; color: #5A7A99; margin-bottom: 2px; }
+  .stmt-wh-summary-figure { font-family: 'DM Mono', monospace; font-size: 24px; font-weight: 600; }
+  .stmt-wh-summary-card.owe .stmt-wh-summary-figure { color: #B3261E; }
+  .stmt-wh-summary-card.clear .stmt-wh-summary-figure { color: #1E7E4A; }
+  .stmt-wh-summary-note { font-size: 9.5px; color: #94AABB; margin-top: 6px; }
 
   /* ── Mobile screen breakpoint ──
      Self-contained statement exports (warehouse statement, full statement)
@@ -1537,22 +1513,16 @@ const STATEMENT_PRINT_CSS = `
     .stmt-company { font-size: 18px; }
     .stmt-info-grid { flex-wrap: wrap; gap: 14px 24px; }
     .stmt-ccy-grid { grid-template-columns: 1fr; }
-    .stmt-wh-stats { grid-template-columns: 1fr 1fr; }
-    .stmt-totals-strip { grid-template-columns: 1fr 1fr; }
-    .stmt-totals-strip .stmt-total-card.remaining { grid-column: 1 / -1; }
+    .stmt-wh-summary { flex-direction: column; }
     .stmt-shipment-hdr, .stmt-shipment-total { flex-direction: column; align-items: flex-start; gap: 4px; }
     .stmt-grand-row { max-width: none; }
-    .stmt-currency-head { flex-wrap: wrap; }
-    /* These tables have 4 narrow columns sized for an A4 sheet — shrink
-       rather than force horizontal scroll, since row content (dates,
-       amounts, a short "View Attachment" link) is short enough to still
-       read at this size. */
-    table.stmt-ledger, .stmt-wh-table {
-      font-size: 10px;
-    }
-    table.stmt-ledger th, table.stmt-ledger td,
-    .stmt-wh-table th, .stmt-wh-table td { padding: 5px 4px; }
-    table.stmt-index th, table.stmt-index td { padding: 6px 8px; }
+    .stmt-wh-supplier-top { flex-direction: column; gap: 6px; }
+    .stmt-wh-supplier-figures { text-align: left; }
+    .stmt-wh-tl-row { flex-wrap: wrap; }
+    /* stmt-ledger (financial statement table) still 4 narrow columns sized
+       for an A4 sheet — shrink rather than force horizontal scroll. */
+    table.stmt-ledger { font-size: 10px; }
+    table.stmt-ledger th, table.stmt-ledger td { padding: 5px 4px; }
   }
 
 
@@ -1807,67 +1777,77 @@ function warehouseMovementFlags(sup, events, remaining) {
 
 function renderWarehouseGroups(shipmentGroups, { showShipmentInfo = true } = {}) {
   const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
-  const statusMeta = {
-    in_production: ['In Production', '#FDF3E3', '#A87830'],
-    ready: ['Ready', '#FEF3E2', '#B85C00'],
-    shipped: ['Shipped', '#E7EEF7', '#2C5A8C'],
-    delivered: ['Delivered', '#E6F4EC', '#1E7E4A'],
+
+  // Merges a supplier's warehouse events (entry/exit) and direct payments
+  // into one chronological list — replaces the old two-separate-tables
+  // layout. GM-routed payments aren't itemized here (SupplierService only
+  // gives us a currency total for those, not dated records at this layer),
+  // so the timeline covers events and customer-recorded direct payments
+  // only; the summary figure below still nets against the GM-paid total.
+  // Exit rows get an inline outcome note (still owing / settled) since the
+  // simplified layout no longer carries a separate "exited, unpaid" pill.
+  const buildSupplierTimeline = (events, directPayments, sup, flagged, exitedSettled) => {
+    const rows = [
+      ...events.map(e => {
+        let label = e.event_type === 'entry' ? 'Arrived at warehouse' : 'Exited warehouse';
+        if (e.event_type === 'exit') {
+          if (flagged) label += ' — still owing';
+          else if (exitedSettled) label += ' — settled';
+        }
+        return { date: e.event_date, label, desc: e.description, amount: null, currency: null, attachment: e.attachmentDataUrl ? e : null };
+      }),
+      ...directPayments.map(p => ({ date: p.paid_at, label: 'You paid supplier directly', desc: p.notes, amount: p.amount, currency: sup.currency, attachment: p.attachmentDataUrl ? p : null })),
+    ];
+    return rows.sort((a, b) => new Date(a.date) - new Date(b.date));
   };
 
   // Suppliers are sorted by pipeline status (In Production → Ready →
   // Shipped → Delivered, unset last) rather than insertion order, so a
   // reader scanning the statement sees suppliers at the same stage grouped
   // together instead of needing to hunt through the whole list.
-  const renderSupplierCards = (supplierBlocks) => SupplierService.sortByStatus(supplierBlocks).map(({ sup, events, directPayments, directTotal, gmTotal, covered, remaining }) => {
+  const renderSupplierCards = (supplierBlocks) => SupplierService.sortByStatus(supplierBlocks).map(({ sup, events, directPayments, covered, remaining }) => {
       const displayName = escapeHtml(sup.name);
       const displayContact = sup.contact ? `<div style="color:#5A7A99;font-size:11px;margin-top:2px;">${escapeHtml(sup.contact)}</div>` : '';
-      const [statusLabel, statusBg, statusFg] = statusMeta[sup.status] || [null, null, null];
-      const statusHtml = statusLabel ? `<span class="stmt-wh-badge" style="background:${statusBg};color:${statusFg};">${statusLabel}</span>` : `<span class="stmt-wh-badge" style="background:#F1F5F9;color:#94AABB;">Status not set</span>`;
 
       const { flagged, exitedSettled } = warehouseMovementFlags(sup, events, remaining);
-      const pillHtml = flagged ? `<span class="flag-pill">⚠ Exited, unpaid</span>` : exitedSettled ? `<span class="settled-pill">✓ Exited, settled</span>` : '';
-      const cardClass = flagged ? ' flagged' : (remaining != null && remaining <= 0 ? ' settled' : '');
-      const remainingStatClass = remaining == null ? '' : flagged ? ' flagged' : remaining > 0 ? ' owed' : ' clear';
+      const settled = remaining != null && remaining <= 0;
+      const badgeHtml = remaining == null
+        ? `<span class="stmt-wh-badge open">No fixed total</span>`
+        : settled
+          ? `<span class="stmt-wh-badge paid">Settled</span>`
+          : `<span class="stmt-wh-badge owed">Still owed</span>`;
 
-      const eventRows = events.length ? events.map(e => `
-        <tr>
-          <td>${e.event_type === 'entry' ? 'Entry' : 'Exit'}</td>
-          <td class="mono">${fmtDate(e.event_date)}</td>
-          <td>${escapeHtml(e.description) || '—'}</td>
-          <td>${e.attachmentDataUrl ? renderAttachmentControl(e) : '—'}</td>
-        </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;color:#94AABB;">No warehouse events logged.</td></tr>`;
+      const figureClass = remaining == null ? '' : settled ? 'clear-amt' : 'owed-amt';
+      const figureValue = remaining != null ? formatCurrency(Math.max(0, remaining), sup.currency) : formatCurrency(covered, sup.currency);
+      const figureSub = remaining != null
+        ? (sup.total_owed != null ? `of ${formatCurrency(sup.total_owed, sup.currency)} owed` : '')
+        : 'paid so far';
 
-      const paymentRows = directPayments.length ? directPayments.map(p => `
-        <tr>
-          <td class="mono">${fmtDate(p.paid_at)}</td>
-          <td class="mono">${formatCurrency(p.amount, p.currency)}</td>
-          <td>${escapeHtml(p.notes) || '—'}</td>
-          <td>${p.attachmentDataUrl ? renderAttachmentControl(p) : '—'}</td>
-        </tr>`).join('') : `<tr><td colspan="4" style="text-align:center;color:#94AABB;">No direct payments recorded.</td></tr>`;
+      const timelineRows = buildSupplierTimeline(events, directPayments, sup, flagged, exitedSettled);
+      const timelineHtml = timelineRows.length ? `
+        <div class="stmt-wh-timeline">
+          ${timelineRows.map(row => `
+            <div class="stmt-wh-tl-row">
+              <div class="stmt-wh-tl-date mono">${fmtDate(row.date)}</div>
+              <div class="stmt-wh-tl-desc">${escapeHtml(row.label)}${row.desc ? ` — ${escapeHtml(row.desc)}` : ''}</div>
+              <div class="stmt-wh-tl-amt mono">${row.amount != null ? formatCurrency(row.amount, row.currency) : ''}</div>
+              ${row.attachment ? `<div class="stmt-wh-tl-photo">${renderAttachmentControl(row.attachment)}</div>` : ''}
+            </div>`).join('')}
+        </div>` : `<div class="stmt-wh-empty">No warehouse activity logged yet.</div>`;
 
       return `
-        <div class="stmt-wh-supplier${cardClass}">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <div class="stmt-wh-supplier">
+          <div class="stmt-wh-supplier-top">
             <div>
-              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:14px;color:#0E1C2F;">${displayName}${pillHtml}</div>
+              <div class="stmt-wh-supplier-name">${displayName}${badgeHtml}</div>
               ${displayContact}
             </div>
-            ${statusHtml}
+            <div class="stmt-wh-supplier-figures">
+              <div class="stmt-wh-fig ${figureClass} mono">${figureValue}</div>
+              ${figureSub ? `<div class="stmt-wh-fig-sub">${figureSub}</div>` : ''}
+            </div>
           </div>
-          <div class="stmt-wh-stats">
-            ${sup.total_owed != null ? `<div class="stmt-wh-stat"><div class="stmt-wh-stat-label">Total Owed</div><div class="stmt-wh-stat-value">${formatCurrency(sup.total_owed, sup.currency)}</div></div>` : ''}
-            <div class="stmt-wh-stat"><div class="stmt-wh-stat-label">Customer Paid Direct</div><div class="stmt-wh-stat-value">${formatCurrency(directTotal, sup.currency)}</div></div>
-            <div class="stmt-wh-stat"><div class="stmt-wh-stat-label">GM Paid</div><div class="stmt-wh-stat-value">${formatCurrency(gmTotal, sup.currency)}</div></div>
-            <div class="stmt-wh-stat${remainingStatClass}"><div class="stmt-wh-stat-label">${remaining != null ? 'Remaining' : 'Total Covered'}</div><div class="stmt-wh-stat-value">${formatCurrency(remaining != null ? remaining : covered, sup.currency)}</div></div>
-          </div>
-          <table class="stmt-wh-table">
-            <thead><tr><th>Event</th><th>Date</th><th>Description</th><th>Photo</th></tr></thead>
-            <tbody>${eventRows}</tbody>
-          </table>
-          <table class="stmt-wh-table">
-            <thead><tr><th>Direct Payment Date</th><th>Amount</th><th>Notes</th><th>Receipt</th></tr></thead>
-            <tbody>${paymentRows}</tbody>
-          </table>
+          ${timelineHtml}
         </div>`;
     }).join('');
 
@@ -1973,141 +1953,62 @@ async function gatherWarehouseStatementData(shipments) {
   return groups;
 }
 
-// Sums each supplier's outstanding Remaining (Total Owed minus Covered) by
-// currency, across every supplier that has a Total Owed set. Suppliers left
-// open-ended (no Total Owed) have no fixed figure to add up, so they're
-// excluded from the sum but counted separately — the export surfaces that
-// count so a reader knows the Owed figure isn't the full picture.
-function sumOwedByCurrency(shipmentGroups) {
-  const owed = {};
-  let openEndedCount = 0;
-  shipmentGroups.forEach(({ supplierBlocks }) => {
-    supplierBlocks.forEach(({ sup, remaining }) => {
-      if (remaining == null) { openEndedCount++; return; }
-      owed[sup.currency] = (owed[sup.currency] || 0) + Math.max(0, remaining);
-    });
-  });
-  return { owed, openEndedCount };
-}
-
-// Groups every supplier block by currency and rolls up the figures a reader
-// needs to act: totals (Owed / Paid Direct / GM Paid / Remaining), which
-// suppliers have arrived or exited the warehouse, and a sorted index. A
-// currency only appears here if at least one tracked supplier is billed in
-// it — currencies with nothing to show never produce an entry, so the
-// caller never has to render an empty section.
+// Groups every supplier block by currency and rolls up the one figure the
+// simplified summary card needs: total outstanding Remaining, plus a count
+// of suppliers left open-ended (no fixed Total Owed) so the card can note
+// they're not included in that figure. A currency only appears here if at
+// least one tracked supplier is billed in it — currencies with nothing to
+// show never produce an entry, so the caller never has to render an empty
+// section.
 function computeCurrencyStats(shipmentGroups) {
   const byCurrency = {};
   shipmentGroups.forEach(({ supplierBlocks }) => {
-    supplierBlocks.forEach((block) => {
-      const { sup, events, directTotal, gmTotal, remaining } = block;
+    supplierBlocks.forEach(({ sup, remaining }) => {
       const c = sup.currency;
-      if (!byCurrency[c]) byCurrency[c] = { totalOwed: 0, paidDirect: 0, gmPaid: 0, remaining: 0, openEndedCount: 0, suppliers: [] };
+      if (!byCurrency[c]) byCurrency[c] = { remaining: 0, openEndedCount: 0 };
       const stat = byCurrency[c];
-      if (sup.total_owed != null) stat.totalOwed += Number(sup.total_owed);
-      else stat.openEndedCount++;
-      stat.paidDirect += directTotal;
-      stat.gmPaid += gmTotal;
+      if (sup.total_owed == null) stat.openEndedCount++;
       if (remaining != null) stat.remaining += Math.max(0, remaining);
-      const { flagged, exitedSettled, isDelivered } = warehouseMovementFlags(sup, events, remaining);
-      stat.suppliers.push({ sup, remaining, flagged, exitedSettled, isDelivered });
     });
   });
   return byCurrency;
 }
 
-// Renders one currency's group: totals strip, a Movement Alerts box (goods
-// arrived at the warehouse — informational; goods exited fully settled —
-// good; goods exited still owing money — the one case worth flagging), and
-// a quick-scan index sorted by what's outstanding first, settled pushed to
-// the bottom.
+// Renders one currency's summary as a single card — one figure ("You still
+// owe $X" / "You're settled"), replacing the old totals strip + Movement
+// Alerts box + quick-scan index. Movement/exit detail now lives inline in
+// each supplier's timeline instead of a separate alerts section.
 function buildCurrencyGroupHTML(currency, stat) {
-  const alertRows = [
-    ...stat.suppliers.filter(s => s.isDelivered).map(s =>
-      `<div class="stmt-wh-alert-row info">📦 ${escapeHtml(s.sup.name)} has arrived at the warehouse.</div>`),
-    ...stat.suppliers.filter(s => s.exitedSettled).map(s =>
-      `<div class="stmt-wh-alert-row good">✓ ${escapeHtml(s.sup.name)} exited the warehouse — fully settled.</div>`),
-    ...stat.suppliers.filter(s => s.flagged).map(s =>
-      `<div class="stmt-wh-alert-row bad">⚠ ${escapeHtml(s.sup.name)} exited the warehouse still owing ${formatCurrency(s.remaining, currency)}.</div>`),
-  ].join('');
-  const alertsHtml = alertRows ? `<div class="stmt-wh-alerts">${alertRows}</div>` : '';
-
-  const sorted = [...stat.suppliers].sort((a, b) => {
-    const aSettled = a.remaining != null && a.remaining <= 0;
-    const bSettled = b.remaining != null && b.remaining <= 0;
-    if (aSettled !== bSettled) return aSettled ? 1 : -1;
-    return (b.remaining || 0) - (a.remaining || 0);
-  });
-  const indexRows = sorted.map(({ sup, remaining, flagged }) => {
-    const settled = remaining != null && remaining <= 0;
-    const remainingCell = remaining == null
-      ? `<td class="r" style="color:#AAB8C4;">No total set</td>`
-      : settled
-        ? `<td class="r idx-remaining clear">Settled</td>`
-        : `<td class="r idx-remaining ${flagged ? 'flagged' : 'owed'}">${formatCurrency(remaining, currency)}</td>`;
-    return `<tr class="${settled ? 'settled-row' : ''}"><td class="idx-name">${escapeHtml(sup.name)}</td>${remainingCell}</tr>`;
-  }).join('');
-
+  const owed = Math.max(0, stat.remaining);
+  const settled = owed <= 0;
+  const cls = settled ? 'clear' : 'owe';
+  const label = settled ? "You're settled" : 'You still owe';
   return `
-    <div class="stmt-currency-group">
-      <div class="stmt-currency-head"><span class="stmt-currency-chip">${currency}</span><div class="line"></div></div>
-      <div class="stmt-totals-strip">
-        <div class="stmt-total-card"><div class="lbl">Total Owed</div><div class="fig mono">${formatCurrency(stat.totalOwed, currency)}</div></div>
-        <div class="stmt-total-card"><div class="lbl">Paid Direct</div><div class="fig mono">${formatCurrency(stat.paidDirect, currency)}</div></div>
-        <div class="stmt-total-card"><div class="lbl">GM Paid</div><div class="fig mono">${formatCurrency(stat.gmPaid, currency)}</div></div>
-        <div class="stmt-total-card remaining"><div class="lbl">Remaining</div><div class="fig mono">${formatCurrency(stat.remaining, currency)}</div></div>
-      </div>
-      ${stat.openEndedCount ? `<div class="stmt-openended-note">${stat.openEndedCount} supplier${stat.openEndedCount > 1 ? 's' : ''} without a fixed Total Owed not included above.</div>` : ''}
-      ${alertsHtml}
-      <table class="stmt-index"><thead><tr><th>Supplier</th><th class="r">Remaining</th></tr></thead><tbody>${indexRows}</tbody></table>
+    <div class="stmt-wh-summary-card ${cls}">
+      <div class="stmt-wh-summary-ccy">${currency}</div>
+      <div class="stmt-wh-summary-label">${label}</div>
+      <div class="stmt-wh-summary-figure mono">${formatCurrency(owed, currency)}</div>
+      ${stat.openEndedCount ? `<div class="stmt-wh-summary-note">${stat.openEndedCount} supplier${stat.openEndedCount > 1 ? 's' : ''} without a fixed total not included</div>` : ''}
     </div>`;
 }
 
-// Builds every currency group present across a set of shipment groups, in
-// alphabetical order, joined into one HTML string — empty string if there
-// are no tracked suppliers at all.
+// Builds every currency's summary card present across a set of shipment
+// groups, in alphabetical order, wrapped in a flex row — empty string if
+// there are no tracked suppliers at all.
 function buildCurrencyGroupsHTML(shipmentGroups) {
   const byCurrency = computeCurrencyStats(shipmentGroups);
-  return Object.keys(byCurrency).sort().map(c => buildCurrencyGroupHTML(c, byCurrency[c])).join('');
-}
-
-
-// minus charges minus executed payments) set side by side with what's
-// currently owed to suppliers in this export's scope, so a reader can tell
-// at a glance whether enough has been funded to cover payouts or a top-up is
-// needed. Only currencies with a nonzero balance or owed amount are shown.
-function buildFundsSummaryHTML(netBalances, owedByCurrency, openEndedCount) {
-  const currencies = Array.from(new Set([...Object.keys(netBalances || {}), ...Object.keys(owedByCurrency || {})]));
-  const rows = currencies.filter(c => netBalances[c] || owedByCurrency[c]).map(c => {
-    const available = netBalances[c] || 0;
-    const owed = owedByCurrency[c] || 0;
-    const diff = available - owed;
-    const short = diff < 0;
-    return `
-      <div class="stmt-wh-stat" style="flex:1;min-width:160px;">
-        <div class="stmt-wh-stat-label">${c}</div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:#5A7A99;"><span>Available</span><span class="mono">${formatCurrency(available, c)}</span></div>
-        <div style="display:flex;justify-content:space-between;margin-top:3px;font-size:11px;color:#5A7A99;"><span>Owed to Suppliers</span><span class="mono">${formatCurrency(owed, c)}</span></div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px dashed #CBD5E1;font-weight:700;font-size:12px;color:${short ? '#B3261E' : '#1E7E4A'};"><span>${short ? 'Shortfall' : 'Surplus'}</span><span class="mono">${formatCurrency(Math.abs(diff), c)}</span></div>
-      </div>`;
-  }).join('');
-  return `
-    <div style="margin-bottom:20px;">
-      <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:14px;color:#0E1C2F;margin-bottom:8px;">Funds Summary</div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;">${rows || '<div style="color:#94AABB;font-size:12px;">No funded or owed amounts on record.</div>'}</div>
-      ${openEndedCount ? `<div style="margin-top:8px;font-size:10.5px;color:#94AABB;">${openEndedCount} supplier${openEndedCount > 1 ? 's' : ''} without a fixed Total Owed ${openEndedCount > 1 ? 'are' : 'is'} not included in the figure above — see detail below.</div>` : ''}
-    </div>`;
+  const cards = Object.keys(byCurrency).sort().map(c => buildCurrencyGroupHTML(c, byCurrency[c])).join('');
+  return cards ? `<div class="stmt-wh-summary">${cards}</div>` : '';
 }
 
 // Standalone warehouse-only export — deliberately excludes every financial
 // ledger, invoice, and margin detail; it exists to answer one question:
-// "have I funded enough to cover what I owe suppliers?" scope 'single' drops
-// every shipment identifier (invoice number, destination, status) since
-// warehouse activity predates and is logically independent of any one
-// shipment; scope 'all' keeps a shipment header per section so multi-shipment
-// activity stays legible.
-function buildWarehouseOnlyStatementHTML(customer, shipmentGroups, netBalances, scope) {
-  const { owed, openEndedCount } = sumOwedByCurrency(shipmentGroups);
+// "what do I still owe each supplier?" scope 'single' drops every shipment
+// identifier (invoice number, destination, status) since warehouse activity
+// predates and is logically independent of any one shipment; scope 'all'
+// keeps a shipment header per section so multi-shipment activity stays
+// legible.
+function buildWarehouseOnlyStatementHTML(customer, shipmentGroups, scope) {
   const stmtDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   const title = scope === 'all' ? 'Warehouse Activity — All Shipments' : 'Warehouse Activity';
   const activityHtml = renderWarehouseGroups(shipmentGroups, { showShipmentInfo: scope === 'all' });
@@ -2129,7 +2030,6 @@ function buildWarehouseOnlyStatementHTML(customer, shipmentGroups, netBalances, 
         <div><div class="stmt-info-label">Statement Date</div><div class="stmt-info-value mono">${stmtDate}</div></div>
       </div>
       <div class="stmt-divider"></div>
-      ${buildFundsSummaryHTML(netBalances, owed, openEndedCount)}
       ${buildCurrencyGroupsHTML(shipmentGroups)}
       ${activityHtml || '<div style="text-align:center;color:#94AABB;padding:24px 0;">No warehouse activity recorded.</div>'}
       <footer class="stmt-footer">
@@ -2139,10 +2039,10 @@ function buildWarehouseOnlyStatementHTML(customer, shipmentGroups, netBalances, 
     </body></html>`;
 }
 
-// Gathers this scope's warehouse data and the customer's net balance, builds
-// the standalone document, and downloads it. scope is 'single' (this
-// shipment only, no shipment identifiers shown) or 'all' (every shipment for
-// this customer, grouped by shipment).
+// Gathers this scope's warehouse data, builds the standalone document, and
+// downloads it. scope is 'single' (this shipment only, no shipment
+// identifiers shown) or 'all' (every shipment for this customer, grouped by
+// shipment).
 async function exportWarehouseActivityStatement(shipment, scope) {
   try {
     Toast.info('Preparing warehouse statement…');
@@ -2150,12 +2050,9 @@ async function exportWarehouseActivityStatement(shipment, scope) {
     const shipments = scope === 'all'
       ? (await ShipmentService.list({ customerId: customer.id })).data || []
       : [shipment];
-    const [warehouseGroups, netBalancesRes] = await Promise.all([
-      gatherWarehouseStatementData(shipments),
-      CustomerService.getNetBalances(customer.id),
-    ]);
+    const warehouseGroups = await gatherWarehouseStatementData(shipments);
     if (!warehouseGroups.length) { Toast.info('No warehouse activity to export yet.'); return; }
-    const html = buildWarehouseOnlyStatementHTML(customer, warehouseGroups, netBalancesRes.data || {}, scope);
+    const html = buildWarehouseOnlyStatementHTML(customer, warehouseGroups, scope);
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2216,7 +2113,11 @@ async function exportInteractiveStatement(customer, shipments) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `GM-Statement-${customer.code}-${new Date().toISOString().slice(0, 10)}.html`;
+    // Single-shipment exports (Send Statement on Shipment Detail) get the invoice number
+    // in the filename so they can't collide with — and silently overwrite — a same-day
+    // customer-wide statement download, or another shipment's, in the user's Downloads folder.
+    const scopeSuffix = shipments.length === 1 ? `-${shipments[0].invoice_no}` : '';
+    a.download = `GM-Statement-${customer.code}${scopeSuffix}-${new Date().toISOString().slice(0, 10)}.html`;
     a.click();
     URL.revokeObjectURL(url);
     Toast.success('Statement downloaded.');
@@ -2656,7 +2557,11 @@ const ShipmentService = {
   },
 
   async getById(id) {
-    const { data, error } = await DB.from('shipments').select('*, customers(id, full_name, code, phone)').eq('id', id).single();
+    // show_supplier_names is included so statements generated from this shipment (Send
+    // Statement below) mask payee names correctly per the customer's preference — without
+    // it, the field is undefined here and buildStatementLedgers' `!== false` check would
+    // silently fall through to "show names" regardless of what the customer has set.
+    const { data, error } = await DB.from('shipments').select('*, customers(id, full_name, code, phone, show_supplier_names)').eq('id', id).single();
     return { data, error: error ? { message: error.message } : null };
   },
 
@@ -4262,6 +4167,7 @@ const Pages = {
           </div>
           <div style="display:flex;align-items:center;gap:8px;">
             <span class="chip chip-${this._statusChip(shipment.status)}">${ShipmentService.STAGE_LABELS[shipment.status]}</span>
+            ${canSeeMargin ? `<button class="btn btn-ghost btn-sm" id="sd-statement">Statement</button><button class="btn btn-ghost btn-sm" id="sd-send-statement">Send Statement</button>` : ''}
             ${canEditShipment ? `<button class="btn btn-ghost btn-sm" id="sd-edit-shipment">Edit</button>` : ''}
           </div>
         </div>
@@ -4753,6 +4659,10 @@ const Pages = {
         Toast.success('Shipment status updated.');
         Pages.shipmentDetail(el, shipmentId, ctx);
       });
+    }
+    if (canSeeMargin) {
+      el.querySelector('#sd-statement').addEventListener('click', () => openStatementPreview(shipment.customers, [shipment]));
+      el.querySelector('#sd-send-statement').addEventListener('click', () => exportInteractiveStatement(shipment.customers, [shipment]));
     }
     if (canEditShipment) {
       el.querySelector('#sd-edit-shipment').addEventListener('click', () => Pages.editShipmentModal(shipment, () => Pages.shipmentDetail(el, shipmentId, ctx)));
